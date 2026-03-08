@@ -1,0 +1,31 @@
+# Local project data (large/generated)
+projects/
+
+# Python cache/artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# Local assistant/tooling config
+.claude/
+
+# OS/temp/log files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp

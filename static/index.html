@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoRA Dataset Label Tool</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Topbar ── -->
+  <div class="topbar">
+    <div class="topbar-logo">LoRA<span> Label Tool</span></div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="dataset">
+        <span class="tab-icon">📁</span>数据集管理
+      </button>
+      <button class="tab-btn" data-tab="resize">
+        <span class="tab-icon">✂️</span>图片处理
+      </button>
+      <button class="tab-btn" data-tab="label">
+        <span class="tab-icon">🏷️</span>图片打标
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Main ── -->
+  <div class="main">
+
+    <!-- ════════════════════════════════════════════
+         TAB 1 · Dataset Management
+    ════════════════════════════════════════════ -->
+    <div class="panel active" id="panel-dataset">
+
+      <!-- Sidebar: project list -->
+      <div class="sidebar">
+        <div class="sidebar-head">
+          项目列表
+          <button class="btn btn-primary btn-sm" id="btn-new-project">+ 新建</button>
+        </div>
+        <div class="sidebar-list" id="project-list"></div>
+      </div>
+
+      <!-- Content -->
+      <div class="content" id="dataset-content">
+        <div class="empty-state" id="dataset-empty">
+          <div class="empty-state-icon">📂</div>
+          <div class="empty-state-text">选择或新建一个项目</div>
+          <div class="empty-state-sub">点击左侧"+ 新建"创建数据集项目</div>
+        </div>
+
+        <div id="dataset-main" class="hidden">
+          <!-- Upload zone -->
+          <div class="card">
+            <div class="card-title">上传图片</div>
+            <div class="drop-zone" id="drop-zone">
+              <div class="drop-zone-icon">📸</div>
+              <div class="drop-zone-text">拖拽图片或文件夹到此处</div>
+              <div class="drop-zone-sub">支持 JPG · PNG · WebP · BMP · GIF &nbsp;|&nbsp; 可多选</div>
+              <div class="flex gap-8 items-center" style="justify-content:center;margin-top:12px">
+                <button class="btn btn-ghost btn-sm" id="btn-pick-files" type="button">选择图片</button>
+                <button class="btn btn-ghost btn-sm" id="btn-pick-folder" type="button">选择文件夹</button>
+              </div>
+            </div>
+            <div class="upload-progress-wrap hidden" id="upload-progress-wrap">
+              <div class="progress-bar-bg">
+                <div class="progress-bar" id="upload-pbar" style="width:0%"></div>
+              </div>
+              <div class="progress-text" id="upload-ptext">准备上传...</div>
+            </div>
+            <input type="file" id="file-input" multiple accept="image/*" style="display:none" />
+            <input type="file" id="folder-input" webkitdirectory directory multiple accept="image/*" style="display:none" />
+          </div>
+
+          <!-- Image grid -->
+          <div class="card">
+            <div class="img-grid-header">
+              <div class="card-title" style="margin-bottom:0">图片列表</div>
+              <div class="flex gap-8 items-center">
+                <span class="img-count" id="img-count"></span>
+                <button class="btn btn-ghost btn-sm" id="btn-refresh-imgs">刷新</button>
+                <button class="btn btn-danger btn-sm" id="btn-clear-labels">清除所有标注</button>
+              </div>
+            </div>
+            <div id="img-grid" class="img-grid mt-12"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         TAB 2 · Image Resize
+    ════════════════════════════════════════════ -->
+    <div class="panel" id="panel-resize">
+      <div class="content">
+
+        <!-- Project selector -->
+        <div class="proj-select-row">
+          <span class="proj-select-label">选择项目：</span>
+          <select id="resize-proj-select">
+            <option value="">-- 请选择项目 --</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="btn-refresh-resize-preview">刷新</button>
+          <span class="proj-img-stat" id="resize-img-stat"></span>
+        </div>
+
+        <div class="resize-layout" id="resize-layout">
+          <!-- Left: settings -->
+          <div class="resize-left">
+            <div class="card">
+              <div class="card-title">输出尺寸</div>
+              <div class="size-inputs">
+                <span class="size-label">宽</span>
+                <input type="number" id="resize-w" value="512" min="1" max="8192" placeholder="宽" style="width:90px" />
+                <span class="size-sep">×</span>
+                <span class="size-label">高</span>
+                <input type="number" id="resize-h" value="512" min="1" max="8192" placeholder="高" style="width:90px" />
+                <button class="btn btn-ghost btn-sm" id="btn-lock-ratio" title="锁定宽高比">🔓</button>
+              </div>
+              <div class="text-sm text-dim mt-8" id="resize-size-text">输出：512 × 512</div>
+
+              <!-- Quick presets -->
+              <div class="flex gap-8 mt-8 flex-wrap">
+                <button class="btn btn-ghost btn-sm" data-preset="512x512">512²</button>
+                <button class="btn btn-ghost btn-sm" data-preset="768x768">768²</button>
+                <button class="btn btn-ghost btn-sm" data-preset="1024x1024">1024²</button>
+                <button class="btn btn-ghost btn-sm" data-preset="512x768">512×768</button>
+                <button class="btn btn-ghost btn-sm" data-preset="768x512">768×512</button>
+                <button class="btn btn-ghost btn-sm" data-preset="1024x768">1024×768</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">缩放模式</div>
+              <div class="mode-grid">
+                <button class="mode-btn active" data-mode="crop">
+                  <span class="mode-btn-icon">✂️</span>裁剪填充
+                </button>
+                <button class="mode-btn" data-mode="fit">
+                  <span class="mode-btn-icon">📐</span>适合框内
+                </button>
+                <button class="mode-btn" data-mode="stretch">
+                  <span class="mode-btn-icon">↔️</span>拉伸填充
+                </button>
+                <button class="mode-btn" data-mode="pad">
+                  <span class="mode-btn-icon">🔲</span>填充边距
+                </button>
+              </div>
+              <div id="pad-color-row" class="form-row hidden">
+                <div class="form-group">
+                  <label class="form-label">填充颜色</label>
+                  <input type="color" id="pad-color" value="#ffffff" />
+                </div>
+              </div>
+              <p class="text-dim text-sm" id="mode-desc">居中裁剪，确保输出完全填充目标尺寸</p>
+            </div>
+
+            <div class="card">
+              <div class="card-title">输出格式</div>
+              <div class="format-btns">
+                <button class="format-btn active" data-fmt="jpg">JPG</button>
+                <button class="format-btn" data-fmt="png">PNG</button>
+                <button class="format-btn" data-fmt="webp">WebP</button>
+                <button class="format-btn" data-fmt="original">原格式</button>
+              </div>
+              <div class="mt-12">
+                <label class="form-label">质量 / Quality</label>
+                <div class="quality-row mt-8">
+                  <input type="range" id="quality-slider" min="1" max="100" value="90" />
+                  <span class="quality-val" id="quality-val">90</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">保存选项</div>
+              <div class="toggle-row">
+                <input type="checkbox" id="resize-overwrite" />
+                <label for="resize-overwrite">覆盖原文件（不创建新文件）</label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary" id="btn-do-resize" style="width:100%">
+              ✂️ 批量处理所有图片
+            </button>
+          </div>
+
+          <!-- Right: preview & results -->
+          <div class="resize-right">
+            <div class="card resize-result-sticky" id="resize-result-card" style="display:none">
+              <div class="resize-result-head result-card-head">
+                <div class="card-title" style="margin-bottom:0">处理结果</div>
+                <div class="result-head-actions">
+                  <button class="btn btn-ghost btn-sm" id="btn-export-resize" style="display:none">导出结果 ZIP</button>
+                  <button class="btn btn-ghost btn-sm" id="btn-close-resize-result" title="关闭">关闭</button>
+                </div>
+              </div>
+              <div id="resize-progress-wrap" class="progress-wrap" style="display:block">
+                <div class="progress-bar-bg"><div class="progress-bar" id="resize-pbar" style="width:0%"></div></div>
+                <div class="progress-text" id="resize-ptext">准备中...</div>
+              </div>
+              <div class="result-list" id="resize-result-list"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">图片预览</div>
+              <div id="resize-preview-grid" class="resize-preview-grid">
+                <div class="empty-state" style="grid-column:1/-1;padding:30px">
+                  <div class="empty-state-icon">🖼️</div>
+                  <div class="empty-state-sub">请先选择项目</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         TAB 3 · Labeling
+    ════════════════════════════════════════════ -->
+    <div class="panel" id="panel-label">
+      <div class="content">
+
+        <!-- Project selector -->
+        <div class="proj-select-row">
+          <span class="proj-select-label">选择项目：</span>
+          <select id="label-proj-select">
+            <option value="">-- 请选择项目 --</option>
+          </select>
+          <span class="proj-img-stat" id="label-img-stat"></span>
+        </div>
+
+        <div class="label-layout" id="label-layout">
+          <!-- Left: settings -->
+          <div class="label-left">
+
+            <!-- LM Studio connection -->
+            <div class="card">
+              <div class="card-title">LM Studio 连接</div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">API 地址</label>
+                <input type="url" id="lm-url" value="http://localhost:1234" placeholder="http://localhost:1234" />
+              </div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">模型</label>
+                <div class="flex gap-8">
+                  <select id="lm-model" style="flex:1">
+                    <option value="">-- 点击测试连接后选择 --</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" id="btn-test-lm">测试</button>
+                </div>
+              </div>
+              <div class="text-sm mt-8" id="lm-status">
+                <span class="status-dot" id="lm-dot"></span>
+                <span id="lm-status-text">未连接</span>
+              </div>
+            </div>
+
+            <!-- Labeling mode -->
+            <div class="card">
+              <div class="card-title">打标模式</div>
+              <div class="mode-cards">
+                <div class="mode-card active" data-lmode="character">
+                  <span class="mode-card-icon">👩</span>人物/角色
+                </div>
+                <div class="mode-card" data-lmode="object">
+                  <span class="mode-card-icon">📦</span>物体/产品
+                </div>
+                <div class="mode-card" data-lmode="style">
+                  <span class="mode-card-icon">🎨</span>风格/画风
+                </div>
+                <div class="mode-card" data-lmode="scenery">
+                  <span class="mode-card-icon">🌄</span>场景/风景
+                </div>
+                <div class="mode-card" data-lmode="fashion">
+                  <span class="mode-card-icon">👗</span>服饰/穿搭
+                </div>
+                <div class="mode-card" data-lmode="shoes">
+                  <span class="mode-card-icon">👟</span>鞋履/鞋包
+                </div>
+                <div class="mode-card" data-lmode="general">
+                  <span class="mode-card-icon">🔍</span>通用描述
+                </div>
+                <div class="mode-card" data-lmode="custom">
+                  <span class="mode-card-icon">✏️</span>自定义
+                </div>
+              </div>
+              <div id="mode-desc-box" class="text-dim text-sm" style="margin-bottom:10px"></div>
+              <div id="custom-prompt-box" class="hidden">
+                <label class="form-label">自定义提示词</label>
+                <textarea id="custom-prompt" rows="4" placeholder="输入你的提示词...&#10;&#10;模型将根据此提示词分析图片并生成标签"></textarea>
+              </div>
+            </div>
+
+            <!-- Tag manipulation -->
+            <div class="card">
+              <div class="card-title">标签前后缀</div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">前置标签（会添加在生成标签之前）</label>
+                <input type="text" id="prepend-tags" placeholder="例：1girl, solo" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">后置标签（会添加在生成标签之后）</label>
+                <input type="text" id="append-tags" placeholder="例：best quality, masterpiece" />
+              </div>
+            </div>
+
+            <!-- Advanced settings -->
+            <div class="card">
+              <div class="card-title">高级设置</div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">最大 Token 数</label>
+                  <input type="number" id="max-tokens" value="500" min="32" max="2000" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">温度 Temperature</label>
+                  <input type="number" id="temperature" value="0.2" min="0" max="2" step="0.1" />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <input type="checkbox" id="overwrite-labels" checked />
+                <label for="overwrite-labels">覆盖已有标注</label>
+              </div>
+              <div class="toggle-row">
+                <input type="checkbox" id="skip-labeled" />
+                <label for="skip-labeled">跳过已标注图片</label>
+              </div>
+            </div>
+
+            <button class="btn btn-success" id="btn-do-label" style="width:100%">
+              🏷️ 开始批量打标
+            </button>
+            <button class="btn btn-ghost btn-sm" id="btn-stop-label" style="width:100%;margin-top:8px;display:none">
+              ⏹ 停止
+            </button>
+
+          </div>
+
+          <!-- Middle: image list & results -->
+          <div class="label-mid">
+            <div class="card label-result-sticky" id="label-result-card" style="display:none">
+              <div class="result-card-head">
+                <div class="card-title" style="margin-bottom:0">打标进度</div>
+                <button class="btn btn-ghost btn-sm" id="btn-close-label-result" title="关闭">关闭</button>
+              </div>
+              <div class="progress-wrap" style="display:block">
+                <div class="progress-bar-bg"><div class="progress-bar" id="label-pbar" style="width:0%"></div></div>
+                <div class="progress-text" id="label-ptext">准备中...</div>
+              </div>
+              <div class="result-list" id="label-result-list"></div>
+            </div>
+
+            <div class="card">
+              <div class="flex justify-between items-center" style="margin-bottom:12px">
+                <div class="card-title" style="margin-bottom:0">图片 &amp; 标注状态</div>
+                <div class="flex gap-8">
+                  <span class="proj-img-stat" id="label-labeled-stat"></span>
+                  <button class="btn btn-ghost btn-sm" id="btn-label-refresh">刷新</button>
+                </div>
+              </div>
+              <div id="label-img-grid" class="img-grid"></div>
+            </div>
+          </div>
+
+          <!-- Right: detail -->
+          <div class="label-detail-col">
+            <div class="card label-detail-sticky" id="label-detail-card">
+              <div class="flex justify-between items-center" style="margin-bottom:12px">
+                <div class="card-title" style="margin-bottom:0">详细信息</div>
+                <div class="text-dim text-sm" id="label-detail-status"></div>
+              </div>
+
+              <div id="label-detail-empty" class="empty-state" style="padding:26px 12px">
+                <div class="empty-state-icon">🖱️</div>
+                <div class="empty-state-sub">点击上方图片查看和编辑标注</div>
+              </div>
+
+              <div id="label-detail-main" class="hidden">
+                <div class="label-detail-head">
+                  <img id="label-detail-img" class="label-detail-img" src="" alt="" />
+                  <div class="label-detail-meta-wrap">
+                    <div id="label-detail-name" class="label-detail-name"></div>
+                    <div id="label-detail-meta" class="text-dim text-sm"></div>
+                  </div>
+                </div>
+
+                <div class="form-group mt-12">
+                  <label class="form-label">标注内容（逗号分隔 tags）</label>
+                  <textarea id="label-detail-text" rows="5"></textarea>
+                </div>
+
+                <div class="flex gap-8 mt-12" style="justify-content:flex-end">
+                  <button class="btn btn-danger btn-sm" id="label-detail-del">删除标注</button>
+                  <button class="btn btn-primary btn-sm" id="label-detail-save">保存标注</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- .main -->
+</div><!-- #app -->
+
+<!-- ── Label edit modal ── -->
+<div class="label-preview-modal hidden" id="label-modal">
+  <div class="label-modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-img-name">image.jpg</span>
+      <button class="btn btn-ghost btn-sm" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <img id="modal-img" class="modal-img" src="" alt="" />
+      <div class="form-group">
+        <label class="form-label">标注内容（逗号分隔的 tags）</label>
+        <textarea id="modal-label-text" rows="5"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="modal-del-label">删除标注</button>
+      <button class="btn btn-ghost btn-sm" id="modal-cancel">取消</button>
+      <button class="btn btn-primary" id="modal-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast container ── -->
+<div id="toast-container"></div>
+
+<!-- ── New Project modal ── -->
+<div class="label-preview-modal hidden" id="new-proj-modal">
+  <div class="label-modal-box" style="width:360px">
+    <div class="modal-header">
+      <span class="modal-title">新建项目</span>
+      <button class="btn btn-ghost btn-sm" id="new-proj-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">项目名称</label>
+        <input type="text" id="new-proj-name" placeholder="my_lora_dataset" maxlength="80" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" id="new-proj-cancel">取消</button>
+      <button class="btn btn-primary" id="new-proj-confirm">创建</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script src="/static/js/dataset.js"></script>
+<script src="/static/js/resize.js"></script>
+<script src="/static/js/label.js"></script>
+</body>
+</html>
