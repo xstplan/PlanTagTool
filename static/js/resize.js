@@ -218,7 +218,10 @@ function renderResizeThumbs() {
 
       const stage = document.createElement("div");
       stage.className = "resize-thumb-stage";
-      stage.style.aspectRatio = `${outSize.w} / ${outSize.h}`;
+      const srcW = Math.max(1, Number(img.width) || outSize.w);
+      const srcH = Math.max(1, Number(img.height) || outSize.h);
+      // Keep preview shape consistent with original image so long/tall images remain long/tall.
+      stage.style.aspectRatio = `${srcW} / ${srcH}`;
 
       const name = document.createElement("div");
       name.className = "resize-thumb-name";
@@ -228,7 +231,6 @@ function renderResizeThumbs() {
       if (resizeMode === "crop") {
         const image = document.createElement("img");
         image.className = "resize-thumb-image";
-        image.src = img.thumb_url || img.url;
         image.alt = img.filename;
         image.draggable = false;
 
@@ -248,11 +250,13 @@ function renderResizeThumbs() {
         frame.appendChild(hline);
 
         const applyLayout = () => {
+          const nW = image.naturalWidth || srcW;
+          const nH = image.naturalHeight || srcH;
+          stage.style.aspectRatio = `${nW} / ${nH}`;
+
           const stageRect = stage.getBoundingClientRect();
           const stageW = Math.max(1, stageRect.width);
           const stageH = Math.max(1, stageRect.height);
-          const nW = image.naturalWidth || outSize.w;
-          const nH = image.naturalHeight || outSize.h;
           const focus = getCropFocus(img.filename);
           const layout = calcCropLayout(stageW, stageH, nW, nH, outSize.w, outSize.h, focus.x, focus.y);
           stage._cropLayout = layout;
@@ -311,6 +315,9 @@ function renderResizeThumbs() {
         stage.addEventListener("pointercancel", finishDrag);
 
         image.addEventListener("load", applyLayout);
+        image.src = img.thumb_url || img.url;
+
+        // Cached images may complete before a visible paint; ensure layout refreshes with real natural size.
         requestAnimationFrame(applyLayout);
 
         stage.appendChild(image);
@@ -322,10 +329,20 @@ function renderResizeThumbs() {
       } else {
         const image = document.createElement("img");
         image.className = "resize-thumb-image-plain";
-        image.src = img.thumb_url || img.url;
         image.alt = img.filename;
         image.loading = "lazy";
         image.decoding = "async";
+
+        const applyPlainLayout = () => {
+          const nW = image.naturalWidth || srcW;
+          const nH = image.naturalHeight || srcH;
+          stage.style.aspectRatio = `${nW} / ${nH}`;
+          scheduleGridRelayout();
+        };
+
+        image.addEventListener("load", applyPlainLayout);
+        image.src = img.thumb_url || img.url;
+        requestAnimationFrame(applyPlainLayout);
         stage.appendChild(image);
       }
 
@@ -359,8 +376,12 @@ async function loadResizePreview(projName, forceRefresh = false) {
   }
 
   try {
-    const refreshSuffix = forceRefresh ? `?t=${Date.now()}` : "";
-    const imgs = await api("GET", `${projectApi(projName)}/images${refreshSuffix}`);
+    const qs = new URLSearchParams();
+    qs.set("source", "original");
+    if (forceRefresh) {
+      qs.set("t", String(Date.now()));
+    }
+    const imgs = await api("GET", `${projectApi(projName)}/images?${qs.toString()}`);
     if (loadToken !== resizeLoadToken) return;
     resizePreviewImages = imgs;
     ensureCropFocusMap();

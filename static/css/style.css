@@ -422,6 +422,52 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .empty-state-text { font-size: 15px; }
 .empty-state-sub  { font-size: 13px; }
 
+/* ── Dataset Panel ───────────────────────────────────────────────────────── */
+.dataset-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+
+.dataset-mid {
+  min-width: 0;
+}
+
+.dataset-detail-col {
+  min-width: 0;
+}
+
+.dataset-detail-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+#dataset-detail-card {
+  min-height: 280px;
+}
+
+#dataset-detail-text {
+  min-height: 220px;
+  height: 260px;
+}
+
+@media (max-width: 1100px) {
+  .dataset-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-detail-sticky {
+    position: static;
+  }
+
+  #dataset-detail-text {
+    min-height: 160px;
+    height: 180px;
+  }
+}
+
 /* ── Resize Panel ─────────────────────────────────────────────────────────── */
 .resize-layout {
   display: grid;
@@ -978,7 +1024,7 @@ hr.divider { border: none; border-top: 1px solid var(--border); margin: 14px 0; 
 
 .resize-thumb-image-plain {
   width: 100%;
-  aspect-ratio: 1;
+  height: 100%;
   object-fit: cover;
   display: block;
 }

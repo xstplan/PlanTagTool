@@ -51,39 +51,84 @@
         </div>
 
         <div id="dataset-main" class="hidden">
-          <!-- Upload zone -->
-          <div class="card">
-            <div class="card-title">上传图片</div>
-            <div class="drop-zone" id="drop-zone">
-              <div class="drop-zone-icon">📸</div>
-              <div class="drop-zone-text">拖拽图片或文件夹到此处</div>
-              <div class="drop-zone-sub">支持 JPG · PNG · WebP · BMP · GIF &nbsp;|&nbsp; 可多选</div>
-              <div class="flex gap-8 items-center" style="justify-content:center;margin-top:12px">
-                <button class="btn btn-ghost btn-sm" id="btn-pick-files" type="button">选择图片</button>
-                <button class="btn btn-ghost btn-sm" id="btn-pick-folder" type="button">选择文件夹</button>
+          <div class="dataset-layout">
+            <div class="dataset-mid">
+              <!-- Upload zone -->
+              <div class="card">
+                <div class="card-title">上传图片</div>
+                <div class="drop-zone" id="drop-zone">
+                  <div class="drop-zone-icon">📸</div>
+                  <div class="drop-zone-text">拖拽图片或文件夹到此处</div>
+                  <div class="drop-zone-sub">支持 JPG · PNG · WebP · BMP · GIF &nbsp;|&nbsp; 可多选</div>
+                  <div class="flex gap-8 items-center" style="justify-content:center;margin-top:12px">
+                    <button class="btn btn-ghost btn-sm" id="btn-pick-files" type="button">选择图片</button>
+                    <button class="btn btn-ghost btn-sm" id="btn-pick-folder" type="button">选择文件夹</button>
+                  </div>
+                </div>
+                <div class="upload-progress-wrap hidden" id="upload-progress-wrap">
+                  <div class="progress-bar-bg">
+                    <div class="progress-bar" id="upload-pbar" style="width:0%"></div>
+                  </div>
+                  <div class="progress-text" id="upload-ptext">准备上传...</div>
+                </div>
+                <input type="file" id="file-input" multiple accept="image/*" style="display:none" />
+                <input type="file" id="folder-input" webkitdirectory directory multiple accept="image/*" style="display:none" />
               </div>
-            </div>
-            <div class="upload-progress-wrap hidden" id="upload-progress-wrap">
-              <div class="progress-bar-bg">
-                <div class="progress-bar" id="upload-pbar" style="width:0%"></div>
-              </div>
-              <div class="progress-text" id="upload-ptext">准备上传...</div>
-            </div>
-            <input type="file" id="file-input" multiple accept="image/*" style="display:none" />
-            <input type="file" id="folder-input" webkitdirectory directory multiple accept="image/*" style="display:none" />
-          </div>
 
-          <!-- Image grid -->
-          <div class="card">
-            <div class="img-grid-header">
-              <div class="card-title" style="margin-bottom:0">图片列表</div>
-              <div class="flex gap-8 items-center">
-                <span class="img-count" id="img-count"></span>
-                <button class="btn btn-ghost btn-sm" id="btn-refresh-imgs">刷新</button>
-                <button class="btn btn-danger btn-sm" id="btn-clear-labels">清除所有标注</button>
+              <!-- Image grid -->
+              <div class="card">
+                <div class="img-grid-header">
+                  <div class="card-title" style="margin-bottom:0">图片列表</div>
+                  <div class="flex gap-8 items-center">
+                    <span class="img-count" id="img-count"></span>
+                    <button class="btn btn-ghost btn-sm" id="btn-refresh-imgs">刷新</button>
+                    <button class="btn btn-danger btn-sm" id="btn-clear-labels">清除所有标注</button>
+                  </div>
+                </div>
+                <div id="img-grid" class="img-grid mt-12"></div>
               </div>
             </div>
-            <div id="img-grid" class="img-grid mt-12"></div>
+
+            <div class="dataset-detail-col">
+              <div class="card dataset-detail-sticky" id="dataset-detail-card">
+                <div class="flex justify-between items-center" style="margin-bottom:12px">
+                  <div class="card-title" style="margin-bottom:0">详细信息</div>
+                  <div class="text-dim text-sm" id="dataset-detail-status"></div>
+                </div>
+
+                <div id="dataset-detail-empty" class="empty-state" style="padding:26px 12px">
+                  <div class="empty-state-icon">🖱️</div>
+                  <div class="empty-state-sub">点击图片查看和编辑详细信息</div>
+                </div>
+
+                <div id="dataset-detail-main" class="hidden">
+                  <div class="label-detail-head">
+                    <img id="dataset-detail-img" class="label-detail-img" src="" alt="" />
+                    <div class="label-detail-meta-wrap">
+                      <div id="dataset-detail-name" class="label-detail-name"></div>
+                      <div id="dataset-detail-meta" class="text-dim text-sm"></div>
+                    </div>
+                  </div>
+
+                  <div class="form-group mt-12">
+                    <label class="form-label">标注内容（逗号分隔 tags）</label>
+                    <textarea id="dataset-detail-text" rows="5"></textarea>
+                  </div>
+                  <div class="flex gap-8 mt-8">
+                    <button class="btn btn-ghost btn-sm" id="dataset-translate-zh" type="button">翻译中文</button>
+                    <button class="btn btn-ghost btn-sm" id="dataset-translate-en" type="button">翻译英文</button>
+                  </div>
+
+                  <div class="flex gap-8 mt-12" style="justify-content:space-between">
+                    <button class="btn btn-danger btn-sm" id="dataset-detail-del-image">删除图片</button>
+                    <div class="flex gap-8">
+                      <button class="btn btn-danger btn-sm" id="dataset-detail-del-label">删除标注</button>
+                      <button class="btn btn-primary btn-sm" id="dataset-detail-save">保存标注</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -311,6 +356,13 @@
             <!-- Advanced settings -->
             <div class="card">
               <div class="card-title">高级设置</div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">标签语言</label>
+                <div class="format-btns" id="label-lang-switch">
+                  <button class="format-btn active" data-label-lang="en" type="button">English</button>
+                  <button class="format-btn" data-label-lang="zh" type="button">中文</button>
+                </div>
+              </div>
               <div class="form-row">
                 <div class="form-group">
                   <label class="form-label">最大 Token 数</label>
@@ -392,6 +444,10 @@
                   <label class="form-label">标注内容（逗号分隔 tags）</label>
                   <textarea id="label-detail-text" rows="5"></textarea>
                 </div>
+                <div class="flex gap-8 mt-8">
+                  <button class="btn btn-ghost btn-sm" id="label-translate-zh" type="button">翻译中文</button>
+                  <button class="btn btn-ghost btn-sm" id="label-translate-en" type="button">翻译英文</button>
+                </div>
 
                 <div class="flex gap-8 mt-12" style="justify-content:flex-end">
                   <button class="btn btn-danger btn-sm" id="label-detail-del">删除标注</button>
@@ -407,28 +463,6 @@
 
   </div><!-- .main -->
 </div><!-- #app -->
-
-<!-- ── Label edit modal ── -->
-<div class="label-preview-modal hidden" id="label-modal">
-  <div class="label-modal-box">
-    <div class="modal-header">
-      <span class="modal-title" id="modal-img-name">image.jpg</span>
-      <button class="btn btn-ghost btn-sm" id="modal-close">✕</button>
-    </div>
-    <div class="modal-body">
-      <img id="modal-img" class="modal-img" src="" alt="" />
-      <div class="form-group">
-        <label class="form-label">标注内容（逗号分隔的 tags）</label>
-        <textarea id="modal-label-text" rows="5"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-danger btn-sm" id="modal-del-label">删除标注</button>
-      <button class="btn btn-ghost btn-sm" id="modal-cancel">取消</button>
-      <button class="btn btn-primary" id="modal-save">保存</button>
-    </div>
-  </div>
-</div>
 
 <!-- ── Toast container ── -->
 <div id="toast-container"></div>

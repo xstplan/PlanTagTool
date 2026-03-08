@@ -8,49 +8,65 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 
-_FORMAT_RULE = (
+_FORMAT_RULE_EN = (
     "Return exactly one line of comma-separated tags in english lowercase. "
     "No sentence, no explanation, no markdown, no bullet list, no numbering."
 )
 
-LABEL_PROMPTS = {
+_FORMAT_RULE_ZH = (
+    "Return exactly one line of comma-separated tags in simplified chinese. "
+    "No sentence, no explanation, no markdown, no bullet list, no numbering."
+)
+
+LABEL_PROMPT_BASES = {
     "character": (
         "Generate LoRA training tags for character images. "
         "Tag visible character and scene details only. "
-        + _FORMAT_RULE
     ),
     "object": (
         "Generate LoRA training tags for object and product images. "
         "Tag visible object details and useful context only. "
-        + _FORMAT_RULE
     ),
     "style": (
         "Generate LoRA training tags for visual style. "
         "Tag medium, rendering, palette, composition, and mood style details. "
-        + _FORMAT_RULE
     ),
     "scenery": (
         "Generate LoRA training tags for scenery and environment images. "
         "Tag visible environment and atmosphere details only. "
-        + _FORMAT_RULE
     ),
     "fashion": (
         "Generate LoRA training tags for clothing and fashion. "
         "Tag garments and accessories only. "
-        + _FORMAT_RULE
     ),
     "shoes": (
         "Generate LoRA training tags for footwear-focused concept training. "
         "Do not output shoe descriptors; tag non-footwear visible context only. "
-        + _FORMAT_RULE
     ),
     "general": (
         "Generate LoRA training tags for mixed images. "
         "Tag visible content comprehensively. "
-        + _FORMAT_RULE
     ),
     "custom": "",
 }
+
+
+def _normalize_language(value: str) -> str:
+    lang = (value or "en").strip().lower()
+    if lang in {"zh", "cn", "zh-cn", "chinese"}:
+        return "zh"
+    return "en"
+
+
+def _format_rule(language: str) -> str:
+    return _FORMAT_RULE_ZH if _normalize_language(language) == "zh" else _FORMAT_RULE_EN
+
+
+def _build_mode_prompt(mode: str, language: str) -> str:
+    base = LABEL_PROMPT_BASES.get(mode)
+    if not base:
+        return ""
+    return base + _format_rule(language)
 
 
 class LabelSettings(BaseModel):
@@ -65,6 +81,16 @@ class LabelSettings(BaseModel):
     overwrite: bool = True
     skip_labeled: bool = False
     job_id: str = ""
+    label_language: str = "en"
+
+
+class TranslateTagsRequest(BaseModel):
+    text: str = ""
+    target_language: str = "zh"
+    lm_studio_url: str = "http://127.0.0.1:1234"
+    model: str = ""
+    max_tokens: int = Field(300, ge=16, le=4096)
+    temperature: float = Field(0.1, ge=0.0, le=2.0)
 
 
 def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
@@ -113,19 +139,70 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
         LABEL_CANCEL_FLAGS[clean_job_id] = True
         return {"ok": True}
 
+    @app.post("/api/translate-tags")
+    async def translate_tags(req: TranslateTagsRequest):
+        source_text = (req.text or "").strip()
+        if not source_text:
+            raise HTTPException(400, "No text to translate")
+
+        target_lang = _normalize_language(req.target_language)
+        target_desc = "simplified chinese" if target_lang == "zh" else "english lowercase"
+        base_url = req.lm_studio_url.rstrip("/")
+        max_tokens = max(64, min(int(req.max_tokens), 1200))
+
+        prompt = (
+            "You are a precise LoRA tag translator. "
+            f"Translate the following comma-separated tags into {target_desc}. "
+            "Keep tags concise and keep comma-separated tag format. "
+            "Output only one line of comma-separated tags."
+        )
+
+        payload = {
+            "model": req.model or "local-model",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": source_text},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": req.temperature,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(f"{base_url}/v1/chat/completions", json=payload)
+                if resp.status_code >= 400:
+                    err_text = (resp.text or "")[:600]
+                    raise RuntimeError(f"LM Studio {resp.status_code}: {err_text}")
+
+                data = resp.json()
+                choices = data.get("choices", [])
+                if not choices:
+                    raise RuntimeError("LM Studio response has no choices")
+
+                raw_text = str(choices[0].get("message", {}).get("content", "")).strip()
+                translated = _clean_llm_response(raw_text)
+                if not translated:
+                    translated = source_text
+        except Exception as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+        return {"translated_text": translated, "language": target_lang}
+
     @app.post("/api/projects/{name}/label")
     async def label_images(name: str, settings: LabelSettings):
         project_dir = _project_dir(name, must_exist=True)
         images = _active_images(project_dir)
         if not images:
             return {"results": [], "message": "No images found", "canceled": False}
+        label_language = _normalize_language(settings.label_language)
 
         if settings.mode == "custom":
             prompt = settings.custom_prompt.strip()
             if not prompt:
                 raise HTTPException(400, "Custom prompt is required in custom mode")
+            prompt = f"{prompt} {_format_rule(label_language)}"
         else:
-            prompt = LABEL_PROMPTS.get(settings.mode)
+            prompt = _build_mode_prompt(settings.mode, label_language)
             if not prompt:
                 raise HTTPException(400, "Unsupported label mode")
 
@@ -164,7 +241,12 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
                                                 "type": "text",
                                                 "text": (
                                                     "Return one single line of comma-separated tags only. "
-                                                    "No explanation, no markdown, no extra words."
+                                                    "No explanation, no markdown, no extra words. "
+                                                    + (
+                                                        "Use simplified chinese tags."
+                                                        if label_language == "zh"
+                                                        else "Use english lowercase tags."
+                                                    )
                                                 ),
                                             },
                                             {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},

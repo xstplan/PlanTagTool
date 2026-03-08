@@ -12,6 +12,7 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
     STATIC_DIR = ctx["STATIC_DIR"]
     PROJECTS_DIR = ctx["PROJECTS_DIR"]
     _active_images = ctx["_active_images"]
+    _iter_project_images = ctx["_iter_project_images"]
     _normalize_project_name = ctx["_normalize_project_name"]
     _project_dir = ctx["_project_dir"]
     _find_image_path = ctx["_find_image_path"]
@@ -49,12 +50,20 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
         return {"ok": True}
 
     @app.get("/api/projects/{name}/images")
-    async def list_images(name: str):
+    async def list_images(name: str, source: str = Query("active")):
         project_dir = _project_dir(name, must_exist=True)
         project_name = project_dir.name
 
+        source_mode = (source or "active").strip().lower()
+        if source_mode == "original":
+            images_src = _iter_project_images(_originals_dir(project_dir))
+            if not images_src:
+                images_src = _iter_project_images(project_dir)
+        else:
+            images_src = _active_images(project_dir)
+
         images = []
-        for img_path in _active_images(project_dir):
+        for img_path in images_src:
             label_file = img_path.with_suffix(".txt")
             label = label_file.read_text(encoding="utf-8").strip() if label_file.exists() else ""
             stat = img_path.stat()

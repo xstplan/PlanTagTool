@@ -1,6 +1,34 @@
 // TAB 1 - Dataset Management
 // =====================================================================
 
+let datasetSelectedProject = "";
+let datasetSelectedFilename = "";
+
+const datasetDetail = createImageDetailPanelController({
+  gridSelector: "#img-grid",
+  emptySelector: "#dataset-detail-empty",
+  mainSelector: "#dataset-detail-main",
+  statusSelector: "#dataset-detail-status",
+  imageSelector: "#dataset-detail-img",
+  nameSelector: "#dataset-detail-name",
+  metaSelector: "#dataset-detail-meta",
+  textSelector: "#dataset-detail-text",
+  defaultMessage: "点击图片查看和编辑详细信息",
+  getSelection: () => ({ project: datasetSelectedProject, filename: datasetSelectedFilename }),
+  setSelection: (project, filename) => {
+    datasetSelectedProject = project || "";
+    datasetSelectedFilename = filename || "";
+  },
+});
+
+function clearDatasetDetailPanel(message = "点击图片查看和编辑详细信息", keepSelection = false) {
+  datasetDetail.clear(message, keepSelection);
+}
+
+function showDatasetDetail(img, projectName = State.currentProject, card = null) {
+  datasetDetail.show(img, projectName, card);
+}
+
 async function loadProjects() {
   try {
     State.projects = await api("GET", "/api/projects");
@@ -55,7 +83,11 @@ function syncProjectSelects() {
 }
 
 async function selectProject(name) {
+  const projectChanged = State.currentProject !== name;
   State.currentProject = name;
+  if (projectChanged) {
+    clearDatasetDetailPanel();
+  }
   renderProjectList();
   await loadImages();
   document.getElementById("dataset-empty").classList.add("hidden");
@@ -70,6 +102,7 @@ async function loadImages() {
     if (loadToken !== datasetLoadToken) return;
     State.images = images;
     renderImageGrid();
+    datasetDetail.sync(State.images, State.currentProject, { emptyMessage: "项目中没有图片" });
     const p = State.projects.find(x => x.name === State.currentProject);
     if (p) p.image_count = State.images.length;
     syncProjectSelects();
@@ -105,6 +138,9 @@ function renderImageGrid() {
       const card = document.createElement("div");
       card.className = "img-card" + (img.labeled ? " labeled" : "");
       card.dataset.filename = img.filename;
+      if (datasetSelectedProject === State.currentProject && datasetSelectedFilename === img.filename) {
+        card.classList.add("selected");
+      }
       card.innerHTML = `
         <img class="img-thumb" src="${previewUrl}" loading="lazy" decoding="async" fetchpriority="low" alt="${escHtml(img.filename)}" />
         <div class="img-card-footer">
@@ -115,7 +151,7 @@ function renderImageGrid() {
       `;
       card.addEventListener("click", e => {
         if (e.target.dataset.del) return;
-        openLabelModal(img, State.currentProject);
+        showDatasetDetail(img, State.currentProject, card);
       });
       card.querySelector(".img-card-del").addEventListener("click", e => {
         e.stopPropagation();
@@ -127,17 +163,17 @@ function renderImageGrid() {
 }
 
 // New project modal
-document.getElementById("btn-new-project").addEventListener("click", () => {
+document.getElementById("btn-new-project")?.addEventListener("click", () => {
   document.getElementById("new-proj-modal").classList.remove("hidden");
   document.getElementById("new-proj-name").value = "";
   document.getElementById("new-proj-name").focus();
 });
-document.getElementById("new-proj-close").addEventListener("click", () =>
+document.getElementById("new-proj-close")?.addEventListener("click", () =>
   document.getElementById("new-proj-modal").classList.add("hidden"));
-document.getElementById("new-proj-cancel").addEventListener("click", () =>
+document.getElementById("new-proj-cancel")?.addEventListener("click", () =>
   document.getElementById("new-proj-modal").classList.add("hidden"));
-document.getElementById("new-proj-confirm").addEventListener("click", createProject);
-document.getElementById("new-proj-name").addEventListener("keydown", e => {
+document.getElementById("new-proj-confirm")?.addEventListener("click", createProject);
+document.getElementById("new-proj-name")?.addEventListener("keydown", e => {
   if (e.key === "Enter") createProject();
 });
 
@@ -167,6 +203,7 @@ async function deleteProject(name) {
     if (State.currentProject === name) {
       State.currentProject = null;
       State.images = [];
+      clearDatasetDetailPanel();
       document.getElementById("dataset-empty").classList.remove("hidden");
       document.getElementById("dataset-main").classList.add("hidden");
     }
@@ -300,29 +337,35 @@ function uploadWithProgress(path, formData, onProgress) {
   });
 }
 
-pickFilesBtn.addEventListener("click", e => {
-  e.stopPropagation();
-  fileInput.click();
-});
-pickFolderBtn.addEventListener("click", e => {
-  e.stopPropagation();
-  folderInput.click();
-});
-dropZone.addEventListener("click", () => {
-  if (uploadInProgress) return;
-  fileInput.click();
-});
-dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("dragover"); });
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
-dropZone.addEventListener("drop", async e => {
-  e.preventDefault();
-  if (uploadInProgress) return;
-  dropZone.classList.remove("dragover");
-  const dropped = await collectDroppedFiles(e.dataTransfer);
-  handleFiles(dropped);
-});
-fileInput.addEventListener("change", () => handleFiles(fileInput.files));
-folderInput.addEventListener("change", () => handleFiles(folderInput.files));
+if (pickFilesBtn && fileInput) {
+  pickFilesBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    fileInput.click();
+  });
+}
+if (pickFolderBtn && folderInput) {
+  pickFolderBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    folderInput.click();
+  });
+}
+if (dropZone && fileInput) {
+  dropZone.addEventListener("click", () => {
+    if (uploadInProgress) return;
+    fileInput.click();
+  });
+  dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("dragover"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+  dropZone.addEventListener("drop", async e => {
+    e.preventDefault();
+    if (uploadInProgress) return;
+    dropZone.classList.remove("dragover");
+    const dropped = await collectDroppedFiles(e.dataTransfer);
+    handleFiles(dropped);
+  });
+}
+fileInput?.addEventListener("change", () => handleFiles(fileInput.files));
+folderInput?.addEventListener("change", () => handleFiles(folderInput.files));
 
 async function handleFiles(files) {
   if (uploadInProgress) {
@@ -372,9 +415,9 @@ async function handleFiles(files) {
   }
 }
 
-document.getElementById("btn-refresh-imgs").addEventListener("click", loadImages);
+document.getElementById("btn-refresh-imgs")?.addEventListener("click", loadImages);
 
-document.getElementById("btn-clear-labels").addEventListener("click", async () => {
+document.getElementById("btn-clear-labels")?.addEventListener("click", async () => {
   if (!State.currentProject) return;
   if (!confirm("清除当前项目所有标注文件（.txt）？")) return;
   try {
@@ -386,31 +429,70 @@ document.getElementById("btn-clear-labels").addEventListener("click", async () =
   }
 });
 
-// Label modal
-let modalImg = null;
-let modalProject = null;
+document.getElementById("dataset-detail-save")?.addEventListener("click", async () => {
+  if (!datasetSelectedProject || !datasetSelectedFilename) {
+    toast("请先选择图片", "info");
+    return;
+  }
 
-function openLabelModal(img, projectName = State.currentProject) {
-  modalImg = img;
-  modalProject = projectName || State.currentProject || "";
-  document.getElementById("modal-img-name").textContent = img.filename;
-  document.getElementById("modal-img").src = img.url;
-  document.getElementById("modal-label-text").value = img.label || "";
-  document.getElementById("label-modal").classList.remove("hidden");
-  document.getElementById("modal-label-text").focus();
-}
+  const label = document.getElementById("dataset-detail-text").value.trim();
+  const fd = new FormData();
+  fd.append("label", label);
 
-document.getElementById("modal-close").addEventListener("click", closeLabelModal);
-document.getElementById("modal-cancel").addEventListener("click", closeLabelModal);
-document.getElementById("label-modal").addEventListener("click", e => {
-  if (e.target === document.getElementById("label-modal")) closeLabelModal();
+  try {
+    await api("PUT", projectLabelApi(datasetSelectedProject, datasetSelectedFilename), fd, true);
+    toast("标注已保存", "success");
+    await refreshLabelRelatedViews(datasetSelectedProject);
+  } catch (e) {
+    toast("保存失败: " + e.message, "error");
+  }
 });
 
-function closeLabelModal() {
-  document.getElementById("label-modal").classList.add("hidden");
-  modalImg = null;
-  modalProject = null;
+document.getElementById("dataset-detail-del-label")?.addEventListener("click", async () => {
+  if (!datasetSelectedProject || !datasetSelectedFilename) {
+    toast("请先选择图片", "info");
+    return;
+  }
+
+  try {
+    await api("DELETE", projectLabelApi(datasetSelectedProject, datasetSelectedFilename));
+    toast("标注已删除", "info");
+    await refreshLabelRelatedViews(datasetSelectedProject);
+  } catch (e) {
+    toast("删除失败: " + e.message, "error");
+  }
+});
+
+document.getElementById("dataset-detail-del-image")?.addEventListener("click", async () => {
+  if (!datasetSelectedFilename) {
+    toast("请先选择图片", "info");
+    return;
+  }
+  await deleteImage(datasetSelectedFilename);
+});
+
+async function translateDatasetDetailTo(targetLanguage) {
+  const textEl = document.getElementById("dataset-detail-text");
+  const source = textEl.value.trim();
+  if (!source) {
+    toast("没有可翻译的标签文本", "info");
+    return;
+  }
+  try {
+    const translated = await translateTagsText(source, targetLanguage, { maxTokens: 400, temperature: 0.1 });
+    if (translated) {
+      textEl.value = translated;
+      toast(targetLanguage === "zh" ? "已翻译为中文" : "Translated to English", "success");
+    } else {
+      toast("翻译结果为空", "error");
+    }
+  } catch (e) {
+    toast("翻译失败: " + e.message, "error");
+  }
 }
+
+document.getElementById("dataset-translate-zh")?.addEventListener("click", () => translateDatasetDetailTo("zh"));
+document.getElementById("dataset-translate-en")?.addEventListener("click", () => translateDatasetDetailTo("en"));
 
 async function refreshLabelRelatedViews(projectName) {
   const tasks = [];
@@ -429,38 +511,8 @@ async function refreshLabelRelatedViews(projectName) {
   }
 }
 
-document.getElementById("modal-save").addEventListener("click", async () => {
-  if (!modalImg) return;
-  const targetProject = modalProject || State.currentProject;
-  if (!targetProject) { toast("未找到项目上下文", "error"); return; }
-  const label = document.getElementById("modal-label-text").value.trim();
-  const fd = new FormData();
-  fd.append("label", label);
-  try {
-    await api("PUT", projectLabelApi(targetProject, modalImg.filename), fd, true);
-    closeLabelModal();
-    await refreshLabelRelatedViews(targetProject);
-    toast("标注已保存", "success");
-  } catch (e) {
-    toast("保存失败: " + e.message, "error");
-  }
-});
-
-document.getElementById("modal-del-label").addEventListener("click", async () => {
-  if (!modalImg) return;
-  const targetProject = modalProject || State.currentProject;
-  if (!targetProject) { toast("未找到项目上下文", "error"); return; }
-  try {
-    await api("DELETE", projectLabelApi(targetProject, modalImg.filename));
-    closeLabelModal();
-    await refreshLabelRelatedViews(targetProject);
-    toast("标注已删除", "info");
-  } catch (e) {
-    toast("删除失败: " + e.message, "error");
-  }
-});
-
 // =====================================================================
 
 // Init dataset tab
+clearDatasetDetailPanel();
 loadProjects();

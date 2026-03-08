@@ -4,6 +4,24 @@
 let labelMode = "character";
 let labelSelectedProject = "";
 let labelSelectedFilename = "";
+let labelLanguage = "en";
+
+const labelDetail = createImageDetailPanelController({
+  gridSelector: "#label-img-grid",
+  emptySelector: "#label-detail-empty",
+  mainSelector: "#label-detail-main",
+  statusSelector: "#label-detail-status",
+  imageSelector: "#label-detail-img",
+  nameSelector: "#label-detail-name",
+  metaSelector: "#label-detail-meta",
+  textSelector: "#label-detail-text",
+  defaultMessage: "点击上方图片查看和编辑标注",
+  getSelection: () => ({ project: labelSelectedProject, filename: labelSelectedFilename }),
+  setSelection: (project, filename) => {
+    labelSelectedProject = project || "";
+    labelSelectedFilename = filename || "";
+  },
+});
 
 const modeInfo = {
   character: "人物打标：标注人数、发型发色、表情、服装、姿态、视角和背景等可见信息",
@@ -17,56 +35,20 @@ const modeInfo = {
 };
 
 function clearLabelDetailPanel(message = "点击上方图片查看和编辑标注", keepSelection = false) {
-  if (!keepSelection) {
-    labelSelectedProject = "";
-    labelSelectedFilename = "";
-  }
-  const empty = document.getElementById("label-detail-empty");
-  const main = document.getElementById("label-detail-main");
-  const emptyText = empty.querySelector(".empty-state-sub");
-  if (emptyText) emptyText.textContent = message;
-  empty.classList.remove("hidden");
-  main.classList.add("hidden");
-  document.getElementById("label-detail-status").textContent = "";
-  document.getElementById("label-detail-img").src = "";
-  document.getElementById("label-detail-name").textContent = "";
-  document.getElementById("label-detail-meta").textContent = "";
-  document.getElementById("label-detail-text").value = "";
-  document.querySelectorAll("#label-img-grid .img-card.selected").forEach(el => el.classList.remove("selected"));
+  labelDetail.clear(message, keepSelection);
 }
 
 function showLabelDetail(img, projName, card = null) {
-  if (!img || !projName) return;
-  labelSelectedProject = projName;
-  labelSelectedFilename = img.filename;
-
-  const grid = document.getElementById("label-img-grid");
-  grid.querySelectorAll(".img-card.selected").forEach(el => el.classList.remove("selected"));
-  if (card) {
-    card.classList.add("selected");
-  } else {
-    const target = Array.from(grid.querySelectorAll(".img-card"))
-      .find(el => el.dataset.filename === img.filename);
-    if (target) target.classList.add("selected");
-  }
-
-  const empty = document.getElementById("label-detail-empty");
-  const main = document.getElementById("label-detail-main");
-  empty.classList.add("hidden");
-  main.classList.remove("hidden");
-
-  document.getElementById("label-detail-status").textContent = img.labeled ? "已标注" : "未标注";
-  document.getElementById("label-detail-img").src = img.url;
-  document.getElementById("label-detail-name").textContent = img.filename;
-  const dims = `${img.width || 0}×${img.height || 0}`;
-  const size = Number.isFinite(img.size) ? formatBytes(img.size) : "";
-  document.getElementById("label-detail-meta").textContent = `${dims}${size ? ` · ${size}` : ""}`;
-  document.getElementById("label-detail-text").value = img.label || "";
+  labelDetail.show(img, projName, card);
 }
 
 function initLabelTab() {
   syncProjectSelects();
   updateModeDesc();
+  const activeLangBtn = document.querySelector("#label-lang-switch .format-btn.active[data-label-lang]");
+  if (activeLangBtn) {
+    labelLanguage = activeLangBtn.dataset.labelLang || "en";
+  }
   requestAnimationFrame(updateLabelPaneHeight);
   const sel = document.getElementById("label-proj-select");
   if (!sel.value && State.currentProject) {
@@ -102,21 +84,10 @@ async function loadLabelImages(projName) {
     stat.textContent = `${imgs.length} 张`;
     stat2.textContent = `已标注 ${labeled}/${imgs.length}`;
     grid.replaceChildren();
-
-    if (labelSelectedProject === projName && labelSelectedFilename) {
-      const selected = imgs.find(i => i.filename === labelSelectedFilename);
-      if (selected) {
-        showLabelDetail(selected, projName, null);
-      } else {
-        clearLabelDetailPanel("当前选中图片不存在");
-      }
-    } else if (labelSelectedProject !== projName) {
-      clearLabelDetailPanel();
-    }
+    labelDetail.sync(imgs, projName, { emptyMessage: "项目中没有图片" });
 
     if (!imgs.length) {
       grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📲</div><div class="empty-state-sub">项目中没有图片</div></div>`;
-      clearLabelDetailPanel("项目中没有图片");
       return;
     }
 
@@ -187,6 +158,37 @@ document.getElementById("label-detail-del").addEventListener("click", async () =
     toast("删除失败: " + e.message, "error");
   }
 });
+
+document.querySelectorAll("#label-lang-switch .format-btn[data-label-lang]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#label-lang-switch .format-btn[data-label-lang]").forEach(el => el.classList.remove("active"));
+    btn.classList.add("active");
+    labelLanguage = btn.dataset.labelLang || "en";
+  });
+});
+
+async function translateLabelDetailTo(targetLanguage) {
+  const textEl = document.getElementById("label-detail-text");
+  const source = textEl.value.trim();
+  if (!source) {
+    toast("没有可翻译的标签文本", "info");
+    return;
+  }
+  try {
+    const translated = await translateTagsText(source, targetLanguage, { maxTokens: 400, temperature: 0.1 });
+    if (translated) {
+      textEl.value = translated;
+      toast(targetLanguage === "zh" ? "已翻译为中文" : "Translated to English", "success");
+    } else {
+      toast("翻译结果为空", "error");
+    }
+  } catch (e) {
+    toast("翻译失败: " + e.message, "error");
+  }
+}
+
+document.getElementById("label-translate-zh")?.addEventListener("click", () => translateLabelDetailTo("zh"));
+document.getElementById("label-translate-en")?.addEventListener("click", () => translateLabelDetailTo("en"));
 
 // Mode cards
 document.querySelectorAll(".mode-card[data-lmode]").forEach(card => {
@@ -299,6 +301,7 @@ document.getElementById("btn-do-label").addEventListener("click", async () => {
       overwrite,
       skip_labeled: skip,
       job_id: labelJobId,
+      label_language: labelLanguage,
     };
 
     const res = await api("POST", `${projectApi(proj)}/label`, settings);
