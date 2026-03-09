@@ -5,6 +5,7 @@ let labelMode = "character";
 let labelSelectedProject = "";
 let labelSelectedFilename = "";
 let labelLanguage = "en";
+let labelContextTarget = null;
 
 const labelDetail = createImageDetailPanelController({
   gridSelector: "#label-img-grid",
@@ -45,6 +46,7 @@ function showLabelDetail(img, projName, card = null) {
 function initLabelTab() {
   syncProjectSelects();
   updateModeDesc();
+  initLabelContextMenu();
   const activeLangBtn = document.querySelector("#label-lang-switch .format-btn.active[data-label-lang]");
   if (activeLangBtn) {
     labelLanguage = activeLangBtn.dataset.labelLang || "en";
@@ -67,6 +69,7 @@ async function loadLabelImages(projName) {
   const stat = document.getElementById("label-img-stat");
   const stat2 = document.getElementById("label-labeled-stat");
   const grid = document.getElementById("label-img-grid");
+  hideLabelContextMenu();
 
   if (!projName) {
     grid.innerHTML = "";
@@ -112,6 +115,7 @@ async function loadLabelImages(projName) {
             ${img.labeled ? '<span class="img-labeled-badge">已标注</span>' : ''}
           </div>`;
         card.addEventListener("click", () => showLabelDetail(img, projName, card));
+        card.addEventListener("contextmenu", event => showLabelContextMenu(event, img, projName, card));
         return card;
       },
     });
@@ -205,6 +209,174 @@ function updateModeDesc() {
   document.getElementById("custom-prompt-box").classList.toggle("hidden", labelMode !== "custom");
 }
 
+function getCurrentLabelSettings(includeJobId = false) {
+  const url = document.getElementById("lm-url").value.trim();
+  const model = document.getElementById("lm-model").value;
+  if (!url) {
+    throw new Error("请输入 LM Studio 地址");
+  }
+  if (labelMode === "custom" && !document.getElementById("custom-prompt").value.trim()) {
+    throw new Error("自定义模式下请填写提示词");
+  }
+
+  const settings = {
+    lm_studio_url: url,
+    model,
+    mode: labelMode,
+    prompt_extra_info: document.getElementById("label-prompt-extra").value.trim(),
+    custom_prompt: document.getElementById("custom-prompt").value.trim(),
+    prepend_tags: document.getElementById("prepend-tags").value.trim(),
+    append_tags: document.getElementById("append-tags").value.trim(),
+    max_tokens: parseInt(document.getElementById("max-tokens").value, 10) || 500,
+    temperature: parseFloat(document.getElementById("temperature").value) || 0.2,
+    overwrite: document.getElementById("overwrite-labels").checked,
+    skip_labeled: document.getElementById("skip-labeled").checked,
+    label_language: labelLanguage,
+  };
+
+  if (includeJobId) {
+    settings.job_id = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  return settings;
+}
+
+function updateLabelResultPanelStart(message, clearList = true) {
+  const card = document.getElementById("label-result-card");
+  const pbar = document.getElementById("label-pbar");
+  const ptext = document.getElementById("label-ptext");
+  const rlist = document.getElementById("label-result-list");
+
+  card.style.display = "block";
+  pbar.style.width = "8%";
+  pbar.style.background = "";
+  ptext.textContent = message;
+  if (clearList) {
+    rlist.innerHTML = "";
+  }
+
+  return { pbar, ptext, rlist };
+}
+
+function appendLabelResultItem(result) {
+  const rlist = document.getElementById("label-result-list");
+  const el = document.createElement("div");
+  if (result.skipped) {
+    el.className = "result-item skip";
+    el.innerHTML = `<span class="result-icon">⏭️</span><div><div class="result-file">${escHtml(result.file)}</div><div class="result-detail text-dim">已跳过（已有标注）</div></div>`;
+  } else if (result.ok) {
+    el.className = "result-item ok";
+    el.innerHTML = `<span class="result-icon">✓</span><div><div class="result-file">${escHtml(result.file)}</div><div class="result-detail">${escHtml(result.label)}</div></div>`;
+  } else {
+    el.className = "result-item err";
+    el.innerHTML = `<span class="result-icon">✗</span><div><div class="result-file">${escHtml(result.file)}</div><div class="result-detail text-error">${escHtml(result.error)}</div></div>`;
+  }
+  rlist.appendChild(el);
+}
+
+function hideLabelContextMenu() {
+  const menu = document.getElementById("label-context-menu");
+  if (menu) {
+    menu.classList.add("hidden");
+  }
+  labelContextTarget = null;
+}
+
+function showLabelContextMenu(event, img, projName, card) {
+  event.preventDefault();
+  showLabelDetail(img, projName, card);
+
+  const menu = document.getElementById("label-context-menu");
+  if (!menu) return;
+
+  labelContextTarget = { img, projName };
+  menu.classList.remove("hidden");
+
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - menuRect.height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+}
+
+function initLabelContextMenu() {
+  if (initLabelContextMenu._initialized) return;
+  initLabelContextMenu._initialized = true;
+
+  const menu = document.getElementById("label-context-menu");
+  const singleBtn = document.getElementById("label-context-single");
+  if (!menu || !singleBtn) return;
+
+  singleBtn.addEventListener("click", async () => {
+    const target = labelContextTarget;
+    hideLabelContextMenu();
+    if (!target) return;
+    await runSingleLabel(target.projName, target.img.filename);
+  });
+
+  document.addEventListener("click", event => {
+    if (!menu.classList.contains("hidden") && !menu.contains(event.target)) {
+      hideLabelContextMenu();
+    }
+  });
+
+  document.addEventListener("contextmenu", event => {
+    if (!event.target.closest("#label-img-grid .img-card")) {
+      hideLabelContextMenu();
+    }
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      hideLabelContextMenu();
+    }
+  });
+
+  window.addEventListener("resize", hideLabelContextMenu);
+  document.addEventListener("scroll", hideLabelContextMenu, true);
+}
+
+async function runSingleLabel(projName, filename) {
+  if (!projName || !filename) {
+    toast("请先选择图片", "info");
+    return;
+  }
+  if (labelJobId) {
+    toast("当前有批量打标任务进行中，请先停止", "info");
+    return;
+  }
+
+  labelSelectedProject = projName;
+  labelSelectedFilename = filename;
+
+  let settings;
+  try {
+    settings = getCurrentLabelSettings(false);
+  } catch (e) {
+    toast(e.message, "error");
+    return;
+  }
+
+  const { pbar, ptext } = updateLabelResultPanelStart(`正在单独打标：${filename}`);
+
+  try {
+    const result = await api("POST", `${projectApi(projName)}/label-single/${encPath(filename)}`, settings);
+    pbar.style.width = "100%";
+    ptext.textContent = result.skipped ? `已跳过：${filename}` : `单图打标完成：${filename}`;
+    appendLabelResultItem(result);
+    toast(result.skipped ? "该图片已按当前设置跳过" : "单图打标完成", "success");
+    await loadLabelImages(projName);
+  } catch (e) {
+    pbar.style.width = "100%";
+    pbar.style.background = "var(--error)";
+    ptext.textContent = `单图打标失败：${filename}`;
+    appendLabelResultItem({ file: filename, ok: false, error: e.message });
+    toast("单图打标失败: " + e.message, "error");
+  }
+}
+
 // LM Studio test
 document.getElementById("btn-test-lm").addEventListener("click", async () => {
   const url = document.getElementById("lm-url").value.trim();
@@ -257,53 +429,21 @@ document.getElementById("btn-do-label").addEventListener("click", async () => {
     toast("请先选择项目", "error");
     return;
   }
-
-  const url = document.getElementById("lm-url").value.trim();
-  const model = document.getElementById("lm-model").value;
-  if (!url) {
-    toast("请输入 LM Studio 地址", "error");
+  let settings;
+  try {
+    settings = getCurrentLabelSettings(true);
+  } catch (e) {
+    toast(e.message, "error");
     return;
   }
 
-  const overwrite = document.getElementById("overwrite-labels").checked;
-  const skip = document.getElementById("skip-labeled").checked;
-  if (labelMode === "custom" && !document.getElementById("custom-prompt").value.trim()) {
-    toast("自定义模式下请填写提示词", "error");
-    return;
-  }
-
-  const card = document.getElementById("label-result-card");
-  const pbar = document.getElementById("label-pbar");
-  const ptext = document.getElementById("label-ptext");
-  const rlist = document.getElementById("label-result-list");
-  card.style.display = "block";
-  pbar.style.width = "5%";
-  ptext.textContent = "正在打标，请稍候...";
-  rlist.innerHTML = "";
-
-  labelJobId = (window.crypto && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const { pbar, ptext } = updateLabelResultPanelStart("正在打标，请稍候...");
+  labelJobId = settings.job_id;
 
   document.getElementById("btn-do-label").disabled = true;
   document.getElementById("btn-stop-label").style.display = "block";
 
   try {
-    const settings = {
-      lm_studio_url: url,
-      model,
-      mode: labelMode,
-      custom_prompt: document.getElementById("custom-prompt").value.trim(),
-      prepend_tags: document.getElementById("prepend-tags").value.trim(),
-      append_tags: document.getElementById("append-tags").value.trim(),
-      max_tokens: parseInt(document.getElementById("max-tokens").value) || 500,
-      temperature: parseFloat(document.getElementById("temperature").value) || 0.2,
-      overwrite,
-      skip_labeled: skip,
-      job_id: labelJobId,
-      label_language: labelLanguage,
-    };
-
     const res = await api("POST", `${projectApi(proj)}/label`, settings);
     pbar.style.width = "100%";
 
@@ -314,18 +454,7 @@ document.getElementById("btn-do-label").addEventListener("click", async () => {
     ptext.textContent = `${res.canceled ? "已停止：" : "完成："}${ok} 已标注${skipCount ? ` / ${skipCount} 跳过` : ""}${fail ? ` / ${fail} 失败` : ""}`;
 
     res.results.forEach(r => {
-      const el = document.createElement("div");
-      if (r.skipped) {
-        el.className = "result-item skip";
-        el.innerHTML = `<span class="result-icon">⏭️</span><div><div class="result-file">${escHtml(r.file)}</div><div class="result-detail text-dim">已跳过（已有标注）</div></div>`;
-      } else if (r.ok) {
-        el.className = "result-item ok";
-        el.innerHTML = `<span class="result-icon">✓</span><div><div class="result-file">${escHtml(r.file)}</div><div class="result-detail">${escHtml(r.label)}</div></div>`;
-      } else {
-        el.className = "result-item err";
-        el.innerHTML = `<span class="result-icon">✗</span><div><div class="result-file">${escHtml(r.file)}</div><div class="result-detail text-error">${escHtml(r.error)}</div></div>`;
-      }
-      rlist.appendChild(el);
+      appendLabelResultItem(r);
     });
 
     toast(res.canceled ? "打标任务已停止" : `打标完成：${ok} 张`, res.canceled ? "info" : "success");

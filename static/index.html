@@ -334,6 +334,15 @@
                 </div>
               </div>
               <div id="mode-desc-box" class="text-dim text-sm" style="margin-bottom:10px"></div>
+              <div class="form-group" style="margin-bottom:10px">
+                <label class="form-label">提示词附加信息</label>
+                <textarea
+                  id="label-prompt-extra"
+                  rows="3"
+                  placeholder="输入会追加到所有打标模式后面的补充要求...&#10;例如：保留复古胶片氛围相关信息，忽略无关小物件"
+                ></textarea>
+                <div class="text-dim text-sm" style="margin-top:6px">这段内容会追加在当前模式提示词后面，用来补充你的人工要求。</div>
+              </div>
               <div id="custom-prompt-box" class="hidden">
                 <label class="form-label">自定义提示词</label>
                 <textarea id="custom-prompt" rows="4" placeholder="输入你的提示词...&#10;&#10;模型将根据此提示词分析图片并生成标签"></textarea>
@@ -506,9 +515,14 @@
   </div>
 </div>
 
+<div class="context-menu hidden" id="label-context-menu">
+  <button class="context-menu-item" id="label-context-single" type="button">按当前设置单独打标</button>
+</div>
+
 <script src="/static/js/app.js?v=__ASSET_VERSION__"></script>
 <script src="/static/js/dataset.js?v=__ASSET_VERSION__"></script>
 <script src="/static/js/resize.js?v=__ASSET_VERSION__"></script>
 <script src="/static/js/label.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>
+

@@ -1,6 +1,6 @@
 import base64
 import io
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 from uuid import uuid4
 
 import httpx
@@ -81,10 +81,19 @@ def _build_mode_prompt(mode: str, language: str) -> str:
     return base + _format_rule(language)
 
 
+def _append_prompt_extra(prompt: str, extra_info: str) -> str:
+    extra = (extra_info or "").strip()
+    base_prompt = (prompt or "").strip()
+    if extra and base_prompt:
+        return f"{base_prompt}\n\n{extra}"
+    return extra or base_prompt
+
+
 class LabelSettings(BaseModel):
     lm_studio_url: str = "http://127.0.0.1:1234"
     model: str = ""
     mode: str = "general"
+    prompt_extra_info: str = ""
     custom_prompt: str = ""
     prepend_tags: str = ""
     append_tags: str = ""
@@ -108,6 +117,7 @@ class TranslateTagsRequest(BaseModel):
 def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
     _project_dir = ctx["_project_dir"]
     _active_images = ctx["_active_images"]
+    _find_image_path = ctx["_find_image_path"]
     _clean_llm_response = ctx["_clean_llm_response"]
     _merge_tags = ctx["_merge_tags"]
     LABEL_CANCEL_FLAGS = ctx["LABEL_CANCEL_FLAGS"]
@@ -130,6 +140,105 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
                 return base64.b64encode(buffer.getvalue()).decode(), "image/png"
             img.save(buffer, format="JPEG", quality=95)
             return base64.b64encode(buffer.getvalue()).decode(), "image/jpeg"
+
+    def _resolve_prompt(settings: LabelSettings) -> Tuple[str, str]:
+        label_language = _normalize_language(settings.label_language)
+
+        if settings.mode == "custom":
+            custom_prompt = settings.custom_prompt.strip()
+            if not custom_prompt:
+                raise HTTPException(400, "Custom prompt is required in custom mode")
+            prompt = _append_prompt_extra(
+                f"{custom_prompt} {_format_rule(label_language)}",
+                settings.prompt_extra_info,
+            )
+        else:
+            prompt = _append_prompt_extra(
+                _build_mode_prompt(settings.mode, label_language),
+                settings.prompt_extra_info,
+            )
+            if not prompt:
+                raise HTTPException(400, "Unsupported label mode")
+
+        return prompt, label_language
+
+    async def _label_single_image(
+        client: httpx.AsyncClient,
+        img_path: Any,
+        settings: LabelSettings,
+        prompt: str,
+        label_language: str,
+        base_url: str,
+    ) -> Dict[str, Any]:
+        label_path = img_path.with_suffix(".txt")
+        if label_path.exists() and (settings.skip_labeled or not settings.overwrite):
+            existing = label_path.read_text(encoding="utf-8").strip()
+            return {"file": img_path.name, "ok": True, "skipped": True, "label": existing}
+
+        gen_max_tokens = max(64, min(int(settings.max_tokens), 1200))
+
+        def build_payload(image_b64: str, image_mime: str) -> Dict[str, Any]:
+            return {
+                "model": settings.model or "local-model",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Return one single line of comma-separated tags only. "
+                                    "No explanation, no markdown, no extra words. "
+                                    + (
+                                        "Use simplified chinese tags."
+                                        if label_language == "zh"
+                                        else "Use english lowercase tags."
+                                    )
+                                ),
+                            },
+                            {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},
+                        ],
+                    },
+                ],
+                "max_tokens": gen_max_tokens,
+                "temperature": settings.temperature,
+            }
+
+        resp = None
+        last_error = ""
+        encode_plans = [("JPEG", 0), ("PNG", 0), ("PNG", 768)]
+        for fmt, max_edge in encode_plans:
+            image_b64, mime = _encode_image_for_lm(img_path, fmt, max_edge=max_edge)
+            payload = build_payload(image_b64, mime)
+            resp = await client.post(f"{base_url}/v1/chat/completions", json=payload)
+            if resp.status_code < 400:
+                break
+            last_error = resp.text
+            if "failed to process image" not in resp.text.lower():
+                break
+
+        if resp is None:
+            raise RuntimeError("LM Studio request not sent")
+        if resp.status_code >= 400:
+            err_text = (resp.text or last_error or "")[:600]
+            raise RuntimeError(f"LM Studio {resp.status_code}: {err_text}")
+
+        data = resp.json()
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError("LM Studio response has no choices")
+
+        raw_label = str(choices[0].get("message", {}).get("content", "")).strip()
+        raw_label = _clean_llm_response(raw_label)
+
+        final_label = _merge_tags(settings.prepend_tags, raw_label, settings.append_tags)
+        if not final_label.strip():
+            fallback = _merge_tags(settings.prepend_tags, settings.append_tags)
+            final_label = fallback.strip() or "untagged"
+
+        label_path.write_text(final_label, encoding="utf-8")
+        return {"file": img_path.name, "ok": True, "label": final_label}
 
     @app.post("/api/test-lmstudio")
     async def test_lmstudio(settings: LabelSettings):
@@ -206,17 +315,7 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
         images = _active_images(project_dir)
         if not images:
             return {"results": [], "message": "No images found", "canceled": False}
-        label_language = _normalize_language(settings.label_language)
-
-        if settings.mode == "custom":
-            prompt = settings.custom_prompt.strip()
-            if not prompt:
-                raise HTTPException(400, "Custom prompt is required in custom mode")
-            prompt = f"{prompt} {_format_rule(label_language)}"
-        else:
-            prompt = _build_mode_prompt(settings.mode, label_language)
-            if not prompt:
-                raise HTTPException(400, "Unsupported label mode")
+        prompt, label_language = _resolve_prompt(settings)
 
         job_id = settings.job_id.strip() or str(uuid4())
         LABEL_CANCEL_FLAGS[job_id] = False
@@ -232,79 +331,41 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
                         canceled = True
                         break
 
-                    label_path = img_path.with_suffix(".txt")
-                    if label_path.exists() and (settings.skip_labeled or not settings.overwrite):
-                        existing = label_path.read_text(encoding="utf-8").strip()
-                        results.append({"file": img_path.name, "ok": True, "skipped": True, "label": existing})
-                        continue
-
                     try:
-                        gen_max_tokens = max(64, min(int(settings.max_tokens), 1200))
-
-                        def build_payload(image_b64: str, image_mime: str) -> Dict[str, Any]:
-                            return {
-                                "model": settings.model or "local-model",
-                                "messages": [
-                                    {"role": "system", "content": prompt},
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "text",
-                                                "text": (
-                                                    "Return one single line of comma-separated tags only. "
-                                                    "No explanation, no markdown, no extra words. "
-                                                    + (
-                                                        "Use simplified chinese tags."
-                                                        if label_language == "zh"
-                                                        else "Use english lowercase tags."
-                                                    )
-                                                ),
-                                            },
-                                            {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},
-                                        ],
-                                    },
-                                ],
-                                "max_tokens": gen_max_tokens,
-                                "temperature": settings.temperature,
-                            }
-
-                        resp = None
-                        last_error = ""
-                        encode_plans = [("JPEG", 0), ("PNG", 0), ("PNG", 768)]
-                        for fmt, max_edge in encode_plans:
-                            img_b64, mime = _encode_image_for_lm(img_path, fmt, max_edge=max_edge)
-                            payload = build_payload(img_b64, mime)
-                            resp = await client.post(f"{base_url}/v1/chat/completions", json=payload)
-                            if resp.status_code < 400:
-                                break
-                            last_error = resp.text
-                            if "failed to process image" not in resp.text.lower():
-                                break
-                        if resp is None:
-                            raise RuntimeError("LM Studio request not sent")
-                        if resp.status_code >= 400:
-                            err_text = (resp.text or last_error or "")[:600]
-                            raise RuntimeError(f"LM Studio {resp.status_code}: {err_text}")
-                        data = resp.json()
-                        choices = data.get("choices", [])
-                        if not choices:
-                            raise RuntimeError("LM Studio response has no choices")
-
-                        raw_label = str(choices[0].get("message", {}).get("content", "")).strip()
-                        raw_label = _clean_llm_response(raw_label)
-
-                        # Model-direct output: keep generated tags and only merge user prefix/suffix.
-                        final_label = _merge_tags(settings.prepend_tags, raw_label, settings.append_tags)
-                        if not final_label.strip():
-                            fallback = _merge_tags(settings.prepend_tags, settings.append_tags)
-                            final_label = fallback.strip() or "untagged"
-
-                        label_path.write_text(final_label, encoding="utf-8")
-                        results.append({"file": img_path.name, "ok": True, "label": final_label})
+                        result = await _label_single_image(
+                            client=client,
+                            img_path=img_path,
+                            settings=settings,
+                            prompt=prompt,
+                            label_language=label_language,
+                            base_url=base_url,
+                        )
+                        results.append(result)
                     except Exception as exc:
                         results.append({"file": img_path.name, "ok": False, "error": str(exc)})
         finally:
             LABEL_CANCEL_FLAGS.pop(job_id, None)
 
         return {"results": results, "job_id": job_id, "canceled": canceled}
+
+    @app.post("/api/projects/{name}/label-single/{filename}")
+    async def label_single(name: str, filename: str, settings: LabelSettings):
+        project_dir = _project_dir(name, must_exist=True)
+        img_path = _find_image_path(project_dir, filename)
+        prompt, label_language = _resolve_prompt(settings)
+        base_url = settings.lm_studio_url.rstrip("/")
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                result = await _label_single_image(
+                    client=client,
+                    img_path=img_path,
+                    settings=settings,
+                    prompt=prompt,
+                    label_language=label_language,
+                    base_url=base_url,
+                )
+        except Exception as exc:
+            raise HTTPException(500, str(exc)) from exc
+
+        return result
