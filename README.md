@@ -193,7 +193,7 @@ projects/
 ## 项目结构
 
 ```
-PlanLabelTool/
+PlanTagTool/
 ├── start.bat              # 一键启动脚本（Windows）
 ├── requirements.txt
 ├── scripts/
