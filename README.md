@@ -225,6 +225,7 @@ PlanLabelTool/
 
 ---
 
+
 ## 常见问题
 
 **Q：上传多图时只进了一张？**
@@ -244,4 +245,4 @@ PlanLabelTool/
 - 确认已加载 Vision 模型（非纯文本模型）
 - 降低 `temperature`（建议 `0.1 ~ 0.3`）
 - 控制 `max_tokens` 在合理范围（建议 `200 ~ 600`）
-- 切换到 `custom` 模式并收紧提示词描述
+- 目前使用的是Qwen 3.5-35B-a3b测试，参数Enable Thinking 关闭
