@@ -3,13 +3,14 @@ from typing import Any, Dict, List
 from urllib.parse import quote
 
 from fastapi import File, Form, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from PIL import Image
 import shutil
 
 
 def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
     STATIC_DIR = ctx["STATIC_DIR"]
+    STATIC_ASSET_VERSION = ctx["STATIC_ASSET_VERSION"]
     PROJECTS_DIR = ctx["PROJECTS_DIR"]
     _active_images = ctx["_active_images"]
     _iter_project_images = ctx["_iter_project_images"]
@@ -24,7 +25,9 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
 
     @app.get("/")
     async def root():
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        html = html.replace("__ASSET_VERSION__", STATIC_ASSET_VERSION)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/projects")
     async def list_projects():
@@ -42,6 +45,20 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
             raise ctx["HTTPException"](400, "Project already exists")
         project_dir.mkdir(parents=True)
         return {"name": clean, "image_count": 0}
+
+    @app.put("/api/projects/{name}")
+    async def rename_project(name: str, new_name: str = Form(...)):
+        project_dir = _project_dir(name, must_exist=True)
+        clean_new_name = _normalize_project_name(new_name)
+        target_dir = _project_dir(clean_new_name, must_exist=False)
+
+        if target_dir.resolve() == project_dir.resolve():
+            return {"ok": True, "name": clean_new_name, "old_name": project_dir.name, "image_count": len(_active_images(project_dir))}
+        if target_dir.exists():
+            raise ctx["HTTPException"](400, "Project already exists")
+
+        shutil.move(str(project_dir), str(target_dir))
+        return {"ok": True, "name": clean_new_name, "old_name": name, "image_count": len(_active_images(target_dir))}
 
     @app.delete("/api/projects/{name}")
     async def delete_project(name: str):

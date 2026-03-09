@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LoRA Dataset Label Tool</title>
-  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/style.css?v=__ASSET_VERSION__" />
 </head>
 <body>
 <div id="app">
@@ -487,9 +487,28 @@
   </div>
 </div>
 
-<script src="/static/js/app.js"></script>
-<script src="/static/js/dataset.js"></script>
-<script src="/static/js/resize.js"></script>
-<script src="/static/js/label.js"></script>
+<div class="label-preview-modal hidden" id="rename-proj-modal">
+  <div class="label-modal-box" style="width:360px">
+    <div class="modal-header">
+      <span class="modal-title">重命名项目</span>
+      <button class="btn btn-ghost btn-sm" id="rename-proj-close">X</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">新的项目名称</label>
+        <input type="text" id="rename-proj-name" placeholder="my_lora_dataset" maxlength="80" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" id="rename-proj-cancel">取消</button>
+      <button class="btn btn-primary" id="rename-proj-confirm">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js?v=__ASSET_VERSION__"></script>
+<script src="/static/js/dataset.js?v=__ASSET_VERSION__"></script>
+<script src="/static/js/resize.js?v=__ASSET_VERSION__"></script>
+<script src="/static/js/label.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

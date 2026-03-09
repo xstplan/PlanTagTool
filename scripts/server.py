@@ -108,6 +108,18 @@ def _thumbs_dir(project_dir: Path) -> Path:
     return d
 
 
+def _compute_static_asset_version(static_dir: Path) -> str:
+    latest_mtime = 0
+    for path in static_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            latest_mtime = max(latest_mtime, int(path.stat().st_mtime))
+        except OSError:
+            continue
+    return str(latest_mtime or int(time.time()))
+
+
 def _active_images(project_dir: Path) -> List[Path]:
     # Prefer resized outputs in project root; fallback to originals.
     root_images = _iter_project_images(project_dir)
@@ -373,6 +385,7 @@ app.mount("/projects", StaticFiles(directory=str(PROJECTS_DIR)), name="projects"
 
 _route_ctx = {
     "STATIC_DIR": STATIC_DIR,
+    "STATIC_ASSET_VERSION": _compute_static_asset_version(STATIC_DIR),
     "PROJECTS_DIR": PROJECTS_DIR,
     "HTTPException": HTTPException,
     "RESIZE_JOBS": RESIZE_JOBS,

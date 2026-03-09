@@ -3,6 +3,7 @@
 
 let datasetSelectedProject = "";
 let datasetSelectedFilename = "";
+let renameTargetProject = "";
 
 const datasetDetail = createImageDetailPanelController({
   gridSelector: "#img-grid",
@@ -53,11 +54,18 @@ function renderProjectList() {
     item.innerHTML = `
       <span class="project-name">${escHtml(p.name)}</span>
       <span class="project-count">${p.image_count}</span>
-      <button class="project-del" data-del="${escHtml(p.name)}" title="删除项目">✕</button>
+      <div class="project-actions">
+        <button class="project-rename" data-rename="${escHtml(p.name)}" title="重命名项目">改名</button>
+        <button class="project-del" data-del="${escHtml(p.name)}" title="删除项目">✕</button>
+      </div>
     `;
     item.addEventListener("click", e => {
-      if (e.target.dataset.del) return;
+      if (e.target.dataset.del || e.target.dataset.rename) return;
       selectProject(p.name);
+    });
+    item.querySelector(".project-rename").addEventListener("click", e => {
+      e.stopPropagation();
+      openRenameProjectModal(p.name);
     });
     item.querySelector(".project-del").addEventListener("click", e => {
       e.stopPropagation();
@@ -193,6 +201,94 @@ async function createProject() {
     toast(`项目 "${name}" 已创建`, "success");
   } catch (e) {
     toast("创建失败: " + e.message, "error");
+  }
+}
+
+function openRenameProjectModal(projectName) {
+  renameTargetProject = projectName || "";
+  const modal = document.getElementById("rename-proj-modal");
+  const input = document.getElementById("rename-proj-name");
+  if (!modal || !input || !renameTargetProject) return;
+  input.value = renameTargetProject;
+  modal.classList.remove("hidden");
+  input.focus();
+  input.select();
+}
+
+function closeRenameProjectModal() {
+  renameTargetProject = "";
+  document.getElementById("rename-proj-modal")?.classList.add("hidden");
+}
+
+function syncRenamedProjectRefs(oldName, newName) {
+  if (State.currentProject === oldName) {
+    State.currentProject = newName;
+  }
+  if (datasetSelectedProject === oldName) {
+    datasetSelectedProject = newName;
+  }
+  if (typeof labelSelectedProject !== "undefined" && labelSelectedProject === oldName) {
+    labelSelectedProject = newName;
+  }
+
+  const resizeSel = document.getElementById("resize-proj-select");
+  if (resizeSel && resizeSel.value === oldName) {
+    resizeSel.value = newName;
+  }
+  const labelSel = document.getElementById("label-proj-select");
+  if (labelSel && labelSel.value === oldName) {
+    labelSel.value = newName;
+  }
+}
+
+document.getElementById("rename-proj-close")?.addEventListener("click", closeRenameProjectModal);
+document.getElementById("rename-proj-cancel")?.addEventListener("click", closeRenameProjectModal);
+document.getElementById("rename-proj-confirm")?.addEventListener("click", renameProject);
+document.getElementById("rename-proj-name")?.addEventListener("keydown", e => {
+  if (e.key === "Enter") renameProject();
+});
+
+async function renameProject() {
+  const oldName = renameTargetProject;
+  const input = document.getElementById("rename-proj-name");
+  const newName = input?.value.trim() || "";
+  if (!oldName) {
+    toast("没有可重命名的项目", "error");
+    return;
+  }
+  if (!newName) {
+    toast("请输入新的项目名称", "error");
+    return;
+  }
+
+  try {
+    const fd = new FormData();
+    fd.append("new_name", newName);
+    const res = await api("PUT", projectApi(oldName), fd, true);
+    const finalName = String(res.name || newName).trim();
+    syncRenamedProjectRefs(oldName, finalName);
+    closeRenameProjectModal();
+    await loadProjects();
+
+    if (State.currentProject === finalName) {
+      await loadImages();
+    }
+    if (typeof loadResizePreview === "function") {
+      const resizeSel = document.getElementById("resize-proj-select");
+      if (resizeSel && resizeSel.value === finalName) {
+        await loadResizePreview(finalName, true);
+      }
+    }
+    if (typeof loadLabelImages === "function") {
+      const labelSel = document.getElementById("label-proj-select");
+      if (labelSel && labelSel.value === finalName) {
+        await loadLabelImages(finalName);
+      }
+    }
+
+    toast(`项目已重命名为 "${finalName}"`, "success");
+  } catch (e) {
+    toast("重命名失败: " + e.message, "error");
   }
 }
 

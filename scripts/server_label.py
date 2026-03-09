@@ -20,32 +20,44 @@ _FORMAT_RULE_ZH = (
 
 LABEL_PROMPT_BASES = {
     "character": (
-        "Generate LoRA training tags for character images. "
-        "Tag visible character and scene details only. "
+        "Generate comma-separated LoRA training tags for a character-focused dataset image. "
+        "Tag only stable, visually trainable attributes: character count, gender cue tags, hairstyle, hair color, eye color, "
+        "face details, expression, outfit, accessories, body pose, camera framing, and background elements only if they are clearly visible and relevant. "
+        "Exclude subjective quality judgments, hidden details, interpretation, and non-visual assumptions. "
     ),
     "object": (
-        "Generate LoRA training tags for object and product images. "
-        "Tag visible object details and useful context only. "
+        "Generate comma-separated LoRA training tags for an object-focused or product-focused dataset image. "
+        "Tag the main subject only: category, material, color, shape, surface texture, structure, parts, condition, "
+        "and printed text or logo on the object if visible. "
+        "Exclude people, hands, body parts, scene, lighting style, camera terms, mood, and unrelated objects unless they are part of the subject itself. "
     ),
     "style": (
-        "Generate LoRA training tags for visual style. "
-        "Tag medium, rendering, palette, composition, and mood style details. "
+        "Generate comma-separated LoRA training tags for style training. "
+        "Tag only stable visual style attributes: medium, style family, line quality, rendering technique, shading method, "
+        "color palette, texture treatment, composition style, and atmosphere. "
+        "Exclude literal scene or object details unless they are necessary to identify the style itself. "
     ),
     "scenery": (
-        "Generate LoRA training tags for scenery and environment images. "
-        "Tag visible environment and atmosphere details only. "
+        "Generate comma-separated LoRA training tags for scenery or background dataset images. "
+        "Tag only environment attributes: indoor or outdoor type, location type, terrain, architecture, vegetation, weather, season, "
+        "time of day, lighting condition, perspective, and atmosphere. "
+        "Exclude people, clothing, and small incidental objects unless they are dominant visual elements. "
     ),
     "fashion": (
-        "Generate LoRA training tags for clothing and fashion. "
-        "Tag garments and accessories only. "
+        "Generate comma-separated LoRA training tags for clothing-focused dataset images. "
+        "Tag only garments and accessories themselves: garment type, silhouette, fit, sleeve or length, neckline, closure, "
+        "fabric, material, pattern, color, trim, decoration, and style category. "
+        "Exclude face, hair, body shape, pose, skin, background, lighting, and non-fashion objects. "
     ),
     "shoes": (
         "Generate LoRA training tags for footwear-focused concept training. "
         "Do not output shoe descriptors; tag non-footwear visible context only. "
     ),
     "general": (
-        "Generate LoRA training tags for mixed images. "
-        "Tag visible content comprehensively. "
+        "Generate comma-separated LoRA training tags for a general LoRA dataset image. "
+        "Tag only the main trainable visual features: primary subject, stable appearance traits, clothing or material, color scheme, "
+        "pose or layout, and background elements only when visually important. "
+        "Exclude subjective evaluations, long phrases, interpretation, and redundant context. "
     ),
     "custom": "",
 }

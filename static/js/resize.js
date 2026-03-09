@@ -14,15 +14,82 @@ const lockRatioBtn = document.getElementById("btn-lock-ratio");
 const resizeSizeText = document.getElementById("resize-size-text");
 const resizeLayout = document.getElementById("resize-layout");
 const resizePreviewGrid = document.getElementById("resize-preview-grid");
-const resizeRightPanel = document.querySelector("#panel-resize .resize-right");
 const resizeExportBtn = document.getElementById("btn-export-resize");
 const resizeCloseResultBtn = document.getElementById("btn-close-resize-result");
 const labelCloseResultBtn = document.getElementById("btn-close-label-result");
 let resizeActiveCardEl = null;
 let resizeRelayoutRaf = 0;
-let resizeRelayoutRestoreTop = null;
 let resizeRenderTimer = null;
+let resizeLayoutRefreshTimer = null;
 let resizePollToken = 0;
+let resizeScrollMemoryTop = 0;
+let resizeRestoreScrollRaf = 0;
+let resizeIsDraggingCrop = false;
+
+function getResizeScrollContainer() {
+  const panel = document.getElementById("panel-resize");
+  if (!panel) return null;
+  // Desktop: right pane scrolls. Mobile: panel content scrolls.
+  if (window.matchMedia("(max-width: 1100px)").matches) {
+    return panel.querySelector(".content");
+  }
+  return panel.querySelector(".resize-right");
+}
+
+function getResizeScrollTop() {
+  const scrollEl = getResizeScrollContainer();
+  if (!scrollEl) return resizeScrollMemoryTop;
+  resizeScrollMemoryTop = scrollEl.scrollTop;
+  return resizeScrollMemoryTop;
+}
+
+function restoreResizeScrollTop(targetTop, frames = 16) {
+  const desiredTop = Math.max(0, Number(targetTop) || 0);
+  if (resizeRestoreScrollRaf) {
+    cancelAnimationFrame(resizeRestoreScrollRaf);
+    resizeRestoreScrollRaf = 0;
+  }
+
+  const tick = left => {
+    if (resizeIsDraggingCrop) {
+      resizeRestoreScrollRaf = 0;
+      return;
+    }
+    const scrollEl = getResizeScrollContainer();
+    if (!scrollEl) return;
+
+    const maxTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    const nextTop = Math.min(desiredTop, maxTop);
+    scrollEl.scrollTop = nextTop;
+    resizeScrollMemoryTop = nextTop;
+
+    if (left <= 0) return;
+    if (maxTop < desiredTop - 1 || Math.abs(scrollEl.scrollTop - desiredTop) > 1) {
+      resizeRestoreScrollRaf = requestAnimationFrame(() => tick(left - 1));
+    }
+  };
+
+  resizeRestoreScrollRaf = requestAnimationFrame(() => tick(frames));
+}
+
+function bindResizeScrollMemory() {
+  const rightEl = document.querySelector("#panel-resize .resize-right");
+  const contentEl = document.querySelector("#panel-resize .content");
+  if (rightEl) {
+    rightEl.addEventListener("scroll", () => {
+      if (!window.matchMedia("(max-width: 1100px)").matches) {
+        resizeScrollMemoryTop = rightEl.scrollTop;
+      }
+    }, { passive: true });
+  }
+  if (contentEl) {
+    contentEl.addEventListener("scroll", () => {
+      if (window.matchMedia("(max-width: 1100px)").matches) {
+        resizeScrollMemoryTop = contentEl.scrollTop;
+      }
+    }, { passive: true });
+  }
+}
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -94,40 +161,25 @@ function setCropFocus(filename, x, y) {
   cropFocusByFile[filename] = { x: clamp01(x), y: clamp01(y) };
 }
 
-function relayoutResizePreviewGrid(restoreTop = null) {
-  if (!resizePreviewGrid) return;
-  const cards = resizePreviewGrid.querySelectorAll(".resize-thumb-card");
-  if (!cards.length) return;
-
-  const style = getComputedStyle(resizePreviewGrid);
-  const rowGap = parseFloat(style.rowGap || style.gap || "0") || 0;
-  const autoRow = parseFloat(style.gridAutoRows || "0") || 0;
-  if (autoRow <= 0) return;
-
-  cards.forEach(card => {
-    card.style.gridRowEnd = "auto";
-  });
-  cards.forEach(card => {
-    const h = card.getBoundingClientRect().height;
-    const span = Math.max(1, Math.ceil((h + rowGap) / (autoRow + rowGap)));
-    card.style.gridRowEnd = `span ${span}`;
-  });
-
-  if (resizeRightPanel && restoreTop !== null) {
-    const maxTop = Math.max(0, resizeRightPanel.scrollHeight - resizeRightPanel.clientHeight);
-    resizeRightPanel.scrollTop = Math.min(restoreTop, maxTop);
+function setResizeActiveCard(cardEl, img) {
+  if (!cardEl || !img) return;
+  if (resizeActiveCardEl && resizeActiveCardEl !== cardEl) {
+    resizeActiveCardEl.classList.remove("active");
   }
+  resizeActiveCardEl = cardEl;
+  resizeActiveCardEl.classList.add("active");
+  resizeSelectedImage = img;
 }
 
-function scheduleRelayoutResizePreviewGrid(restoreTop = null) {
-  if (restoreTop !== null) {
-    resizeRelayoutRestoreTop = restoreTop;
-  }
+function relayoutResizePreviewGrid() {
+  // Resize preview now uses CSS columns masonry, so no JS relayout is needed.
+}
+
+function scheduleRelayoutResizePreviewGrid() {
   if (resizeRelayoutRaf) return;
   resizeRelayoutRaf = requestAnimationFrame(() => {
     resizeRelayoutRaf = 0;
-    relayoutResizePreviewGrid(resizeRelayoutRestoreTop);
-    resizeRelayoutRestoreTop = null;
+    relayoutResizePreviewGrid();
   });
 }
 
@@ -136,6 +188,23 @@ function scheduleRenderResizeThumbs(delay = 80) {
   resizeRenderTimer = setTimeout(() => {
     resizeRenderTimer = null;
     renderResizeThumbs();
+  }, delay);
+}
+
+function refreshResizeThumbLayouts() {
+  if (!resizePreviewGrid) return;
+  resizePreviewGrid.querySelectorAll(".resize-thumb-stage").forEach(stage => {
+    if (typeof stage._applyResizeLayout === "function") {
+      stage._applyResizeLayout();
+    }
+  });
+}
+
+function scheduleRefreshResizeThumbLayouts(delay = 40) {
+  if (resizeLayoutRefreshTimer) clearTimeout(resizeLayoutRefreshTimer);
+  resizeLayoutRefreshTimer = setTimeout(() => {
+    resizeLayoutRefreshTimer = null;
+    refreshResizeThumbLayouts();
   }, delay);
 }
 
@@ -182,22 +251,23 @@ function calcCropLayout(stageW, stageH, imgW, imgH, outW, outH, focusX, focusY) 
 function renderResizeThumbs() {
   const renderToken = ++resizeRenderToken;
   const grid = resizePreviewGrid;
-  const prevTop = resizeRightPanel ? resizeRightPanel.scrollTop : 0;
+  const prevTop = getResizeScrollTop();
+  const prevGridHeight = grid ? grid.scrollHeight : 0;
   resizeActiveCardEl = null;
+  if (grid && prevGridHeight > 0) {
+    // Keep enough scrollable height during full re-render to avoid browser snapping to top.
+    grid.style.minHeight = `${prevGridHeight}px`;
+  }
   grid.replaceChildren();
+  restoreResizeScrollTop(prevTop);
 
   const items = resizePreviewImages.slice();
-  let restoredTop = false;
   const scheduleGridRelayout = () => {
-    if (!restoredTop) {
-      restoredTop = true;
-      scheduleRelayoutResizePreviewGrid(prevTop);
-    } else {
-      scheduleRelayoutResizePreviewGrid();
-    }
+    scheduleRelayoutResizePreviewGrid();
   };
 
   if (!items.length) {
+    grid.style.minHeight = "";
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;padding:30px"><div class="empty-state-icon">📲</div><div class="empty-state-sub">项目中没有图片</div></div>`;
     return;
   }
@@ -249,7 +319,7 @@ function renderResizeThumbs() {
         frame.appendChild(vline);
         frame.appendChild(hline);
 
-        const applyLayout = () => {
+        const applyLayout = (withGridRelayout = true) => {
           const nW = image.naturalWidth || srcW;
           const nH = image.naturalHeight || srcH;
           stage.style.aspectRatio = `${nW} / ${nH}`;
@@ -267,13 +337,17 @@ function renderResizeThumbs() {
           setRect(maskLeft, 0, layout.cropY, layout.cropX, layout.cropH);
           setRect(maskRight, layout.cropX + layout.cropW, layout.cropY, Math.max(0, stageW - layout.cropX - layout.cropW), layout.cropH);
           setRect(frame, layout.cropX, layout.cropY, layout.cropW, layout.cropH);
-          scheduleGridRelayout();
+          if (withGridRelayout) {
+            scheduleGridRelayout();
+          }
         };
+        stage._applyResizeLayout = () => applyLayout(false);
 
         let drag = null;
         const finishDrag = e => {
           if (!drag || e.pointerId !== drag.pointerId) return;
           drag = null;
+          resizeIsDraggingCrop = false;
           stage.classList.remove("dragging");
           if (stage.hasPointerCapture(e.pointerId)) {
             stage.releasePointerCapture(e.pointerId);
@@ -294,6 +368,7 @@ function renderResizeThumbs() {
             extraX: layout.extraX,
             extraY: layout.extraY,
           };
+          resizeIsDraggingCrop = true;
           stage.classList.add("dragging");
           stage.setPointerCapture(e.pointerId);
           e.preventDefault();
@@ -308,17 +383,18 @@ function renderResizeThumbs() {
           if (drag.extraX > 0) nextX = clamp01(drag.startFocusX - dx / drag.extraX);
           if (drag.extraY > 0) nextY = clamp01(drag.startFocusY - dy / drag.extraY);
           setCropFocus(img.filename, nextX, nextY);
-          applyLayout();
+          // Dragging only changes current card crop position, no need to relayout whole grid.
+          applyLayout(false);
         });
 
         stage.addEventListener("pointerup", finishDrag);
         stage.addEventListener("pointercancel", finishDrag);
 
-        image.addEventListener("load", applyLayout);
+        image.addEventListener("load", () => applyLayout(true));
         image.src = img.thumb_url || img.url;
 
         // Cached images may complete before a visible paint; ensure layout refreshes with real natural size.
-        requestAnimationFrame(applyLayout);
+        requestAnimationFrame(() => applyLayout(true));
 
         stage.appendChild(image);
         stage.appendChild(maskTop);
@@ -339,6 +415,7 @@ function renderResizeThumbs() {
           stage.style.aspectRatio = `${nW} / ${nH}`;
           scheduleGridRelayout();
         };
+        stage._applyResizeLayout = applyPlainLayout;
 
         image.addEventListener("load", applyPlainLayout);
         image.src = img.thumb_url || img.url;
@@ -349,16 +426,20 @@ function renderResizeThumbs() {
       card.appendChild(stage);
       card.appendChild(name);
       card.addEventListener("click", () => {
-        if (!resizeSelectedImage || resizeSelectedImage.filename !== img.filename) {
-          resizeSelectedImage = img;
-          renderResizeThumbs();
-        }
+        if (resizeSelectedImage && resizeSelectedImage.filename === img.filename) return;
+        setResizeActiveCard(card, img);
       });
 
       return card;
     },
     onChunk: scheduleGridRelayout,
-    onDone: () => scheduleGridRelayout(prevTop),
+    onDone: () => {
+      scheduleGridRelayout();
+      restoreResizeScrollTop(prevTop);
+      requestAnimationFrame(() => {
+        grid.style.minHeight = "";
+      });
+    },
   });
 }
 
@@ -458,7 +539,8 @@ document.querySelectorAll("[data-preset]").forEach(btn => {
     resizeWInput.value = w;
     resizeHInput.value = h;
     if (h > 0) resizeRatio = w / h;
-    renderResizeThumbs();
+    updateResizeSizeText();
+    scheduleRefreshResizeThumbLayouts(0);
   });
 });
 
@@ -469,7 +551,7 @@ lockRatioBtn.addEventListener("click", () => {
   resizeRatio = w / h;
   lockRatioBtn.textContent = lockResizeRatio ? "🔒" : "🔓";
   lockRatioBtn.title = lockResizeRatio ? "已锁定宽高比" : "锁定宽高比";
-  renderResizeThumbs();
+  scheduleRefreshResizeThumbLayouts(0);
 });
 
 resizeWInput.addEventListener("input", () => {
@@ -480,7 +562,7 @@ resizeWInput.addEventListener("input", () => {
       resizeHInput.value = Math.max(1, Math.round(w / resizeRatio));
     }
   }
-  scheduleRenderResizeThumbs();
+  scheduleRefreshResizeThumbLayouts();
 });
 
 resizeHInput.addEventListener("input", () => {
@@ -491,16 +573,18 @@ resizeHInput.addEventListener("input", () => {
       resizeWInput.value = Math.max(1, Math.round(h * resizeRatio));
     }
   }
-  scheduleRenderResizeThumbs();
+  scheduleRefreshResizeThumbLayouts();
 });
 
-resizeWInput.addEventListener("change", renderResizeThumbs);
-resizeHInput.addEventListener("change", renderResizeThumbs);
+resizeWInput.addEventListener("change", () => scheduleRefreshResizeThumbLayouts(0));
+resizeHInput.addEventListener("change", () => scheduleRefreshResizeThumbLayouts(0));
 window.addEventListener("resize", () => {
-  scheduleRenderResizeThumbs(120);
+  scheduleRefreshResizeThumbLayouts(120);
   updateResizePaneHeight();
   updateLabelPaneHeight();
 });
+
+bindResizeScrollMemory();
 
 // Mode buttons
 const modeBtns = document.querySelectorAll(".mode-btn[data-mode]");
