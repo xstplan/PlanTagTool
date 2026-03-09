@@ -1,6 +1,6 @@
 <div align="center">
 
-# LoRA Dataset Label Tool
+# Plan Tag Tool
 
 **面向 LoRA 训练的本地数据集管理与打标工具**
 
