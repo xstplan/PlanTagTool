@@ -37,7 +37,7 @@
 
 - Python **3.10+**
 - Windows（使用 `start.bat` 一键启动）
-- [LM Studio](https://lmstudio.ai/)（使用打标 / 翻译功能时需加载 Vision 模型，目前使用的是Qwen 3.5-35B-a3b，参数Enable Thinking 关闭）
+- [LM Studio](https://lmstudio.ai/)（使用打标 / 翻译功能时需加载 Vision 模型，目前使用的是Qwen 3.5-35B-a3b，参数Enable Thinking 关闭，上下文长度`4096`，temperature：`0.1-0.3`）
 
 ### 方式一：一键启动（推荐）
 
@@ -245,4 +245,4 @@ PlanTagTool/
 - 确认已加载 Vision 模型（非纯文本模型）
 - 降低 `temperature`（建议 `0.1 ~ 0.3`）
 - 控制 `max_tokens` 在合理范围（建议 `200 ~ 600`）
-- 目前使用的是Qwen 3.5-35B-a3b测试，参数Enable Thinking 关闭
+- 目前使用的是Qwen 3.5-35B-a3b测试，参数Enable Thinking 关闭，上下文长度`4096`,其他模型测试效果不太好。
