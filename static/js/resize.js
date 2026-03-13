@@ -25,6 +25,7 @@ let resizePollToken = 0;
 let resizeScrollMemoryTop = 0;
 let resizeRestoreScrollRaf = 0;
 let resizeIsDraggingCrop = false;
+let resizeContextTarget = null;
 
 function getResizeScrollContainer() {
   const panel = document.getElementById("panel-resize");
@@ -429,6 +430,7 @@ function renderResizeThumbs() {
         if (resizeSelectedImage && resizeSelectedImage.filename === img.filename) return;
         setResizeActiveCard(card, img);
       });
+      card.addEventListener("contextmenu", event => showResizeContextMenu(event, img, card));
 
       return card;
     },
@@ -446,6 +448,7 @@ function renderResizeThumbs() {
 async function loadResizePreview(projName, forceRefresh = false) {
   const loadToken = ++resizeLoadToken;
   const stat = document.getElementById("resize-img-stat");
+  hideResizeContextMenu();
 
   if (!projName) {
     resizeRenderToken += 1;
@@ -488,6 +491,7 @@ async function loadResizePreview(projName, forceRefresh = false) {
 function initResizeTab() {
   syncProjectSelects();
   updateResizeSizeText();
+  initResizeContextMenu();
   requestAnimationFrame(updateResizePaneHeight);
 
   const sel = document.getElementById("resize-proj-select");
@@ -496,6 +500,170 @@ function initResizeTab() {
   }
   if (sel.value) {
     loadResizePreview(sel.value);
+  }
+}
+
+function getCurrentResizeSettings() {
+  const w = parseInt(resizeWInput.value, 10);
+  const h = parseInt(resizeHInput.value, 10);
+  if (!w || !h || w < 1 || h < 1) {
+    throw new Error("请输入有效的宽高");
+  }
+
+  return {
+    width: w,
+    height: h,
+    mode: resizeMode,
+    output_format: resizeFmt,
+    quality: parseInt(qualSlider.value, 10),
+    pad_color: document.getElementById("pad-color").value,
+    overwrite: document.getElementById("resize-overwrite").checked,
+    skip_existing: document.getElementById("resize-skip-existing").checked,
+    crop_focus_map: cropFocusByFile,
+  };
+}
+
+function startResizeResultPanel(message, clearList = true) {
+  const card = document.getElementById("resize-result-card");
+  const pbar = document.getElementById("resize-pbar");
+  const ptext = document.getElementById("resize-ptext");
+  const rlist = document.getElementById("resize-result-list");
+
+  card.style.display = "block";
+  resizeExportBtn.style.display = "none";
+  resizeExportBtn.disabled = true;
+  pbar.style.background = "var(--accent)";
+  pbar.style.width = "2%";
+  ptext.textContent = message;
+  if (clearList) {
+    rlist.innerHTML = "";
+  }
+
+  return { pbar, ptext };
+}
+
+function appendResizeResultItem(result) {
+  const rlist = document.getElementById("resize-result-list");
+  const el = document.createElement("div");
+  if (result.skipped) {
+    el.className = "result-item skip";
+    el.innerHTML = `<span class="result-icon">⏭️</span>
+      <div><div class="result-file">${escHtml(result.file)}</div>
+      <div class="result-detail">已跳过，保留现有输出${result.output ? ` → ${escHtml(result.output)}` : ""}${result.size ? ` (${escHtml(result.size)})` : ""}</div></div>`;
+  } else if (result.ok) {
+    el.className = "result-item ok";
+    el.innerHTML = `<span class="result-icon">✓</span>
+      <div><div class="result-file">${escHtml(result.file)}</div>
+      <div class="result-detail">→ ${escHtml(result.output)}${result.size ? ` (${escHtml(result.size)})` : ""}</div></div>`;
+  } else {
+    el.className = "result-item err";
+    el.innerHTML = `<span class="result-icon">✗</span>
+      <div><div class="result-file">${escHtml(result.file)}</div>
+      <div class="result-detail">${escHtml(result.error)}</div></div>`;
+  }
+  rlist.appendChild(el);
+}
+
+function hideResizeContextMenu() {
+  const menu = document.getElementById("resize-context-menu");
+  if (menu) {
+    menu.classList.add("hidden");
+  }
+  resizeContextTarget = null;
+}
+
+function showResizeContextMenu(event, img, card) {
+  event.preventDefault();
+  setResizeActiveCard(card, img);
+
+  const menu = document.getElementById("resize-context-menu");
+  if (!menu) return;
+
+  resizeContextTarget = { img };
+  menu.classList.remove("hidden");
+
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - menuRect.height - 8);
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+}
+
+function initResizeContextMenu() {
+  if (initResizeContextMenu._initialized) return;
+  initResizeContextMenu._initialized = true;
+
+  const menu = document.getElementById("resize-context-menu");
+  const singleBtn = document.getElementById("resize-context-single");
+  if (!menu || !singleBtn) return;
+
+  singleBtn.addEventListener("click", async () => {
+    const target = resizeContextTarget;
+    hideResizeContextMenu();
+    if (!target) return;
+    await runSingleResize(target.img.filename);
+  });
+
+  document.addEventListener("click", event => {
+    if (!menu.classList.contains("hidden") && !menu.contains(event.target)) {
+      hideResizeContextMenu();
+    }
+  });
+
+  document.addEventListener("contextmenu", event => {
+    if (!event.target.closest("#resize-preview-grid .resize-thumb-card")) {
+      hideResizeContextMenu();
+    }
+  });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      hideResizeContextMenu();
+    }
+  });
+
+  window.addEventListener("resize", hideResizeContextMenu);
+  document.addEventListener("scroll", hideResizeContextMenu, true);
+}
+
+async function runSingleResize(filename) {
+  const proj = document.getElementById("resize-proj-select").value;
+  if (!proj || !filename) {
+    toast("请先选择项目和图片", "error");
+    return;
+  }
+  if (document.getElementById("btn-do-resize").disabled) {
+    toast("当前有批量处理任务进行中，请等待完成", "info");
+    return;
+  }
+
+  let payload;
+  try {
+    payload = getCurrentResizeSettings();
+  } catch (e) {
+    toast(e.message, "error");
+    return;
+  }
+
+  const { pbar, ptext } = startResizeResultPanel(`正在单图处理：${filename}`);
+
+  try {
+    const result = await api("POST", `${projectApi(proj)}/resize-single/${encPath(filename)}`, payload);
+    pbar.style.width = "100%";
+    ptext.textContent = result.skipped ? `已跳过：${filename}` : `单图处理完成：${filename}`;
+    appendResizeResultItem(result);
+    if (result.ok) {
+      resizeExportBtn.style.display = "inline-flex";
+      resizeExportBtn.disabled = false;
+    }
+    toast(result.skipped ? "该图片已按当前设置跳过" : "单图处理完成", "success");
+    await loadResizePreview(proj, true);
+  } catch (e) {
+    pbar.style.width = "100%";
+    pbar.style.background = "var(--error)";
+    ptext.textContent = `单图处理失败：${filename}`;
+    appendResizeResultItem({ file: filename, ok: false, error: e.message });
+    toast("单图处理失败: " + e.message, "error");
   }
 }
 
@@ -626,41 +794,19 @@ document.getElementById("btn-do-resize").addEventListener("click", async () => {
     toast("请先选择项目", "error");
     return;
   }
-
-  const w = parseInt(resizeWInput.value);
-  const h = parseInt(resizeHInput.value);
-  if (!w || !h || w < 1 || h < 1) {
-    toast("请输入有效的宽高", "error");
+  let payload;
+  try {
+    payload = getCurrentResizeSettings();
+  } catch (e) {
+    toast(e.message, "error");
     return;
   }
 
-  const card = document.getElementById("resize-result-card");
-  const pbar = document.getElementById("resize-pbar");
-  const ptext = document.getElementById("resize-ptext");
-  const rlist = document.getElementById("resize-result-list");
-
-  card.style.display = "block";
-  resizeExportBtn.style.display = "none";
-  resizeExportBtn.disabled = true;
-  pbar.style.background = "var(--accent)";
-  pbar.style.width = "2%";
-  ptext.textContent = "准备任务...";
-  rlist.innerHTML = "";
+  const { pbar, ptext } = startResizeResultPanel("准备任务...");
   document.getElementById("btn-do-resize").disabled = true;
   const pollToken = ++resizePollToken;
 
   try {
-    const payload = {
-      width: w,
-      height: h,
-      mode: resizeMode,
-      output_format: resizeFmt,
-      quality: parseInt(qualSlider.value),
-      pad_color: document.getElementById("pad-color").value,
-      overwrite: document.getElementById("resize-overwrite").checked,
-      crop_focus_map: cropFocusByFile,
-    };
-
     const start = await api("POST", `${projectApi(proj)}/resize/start`, payload);
     const jobId = start.job_id;
     if (!jobId) {
@@ -689,26 +835,22 @@ document.getElementById("btn-do-resize").addEventListener("click", async () => {
 
     const results = Array.isArray(job?.results) ? job.results : [];
     pbar.style.width = "100%";
-    const ok = results.filter(r => r.ok).length;
+    const ok = results.filter(r => r.ok && !r.skipped).length;
+    const skipped = results.filter(r => r.skipped).length;
     const fail = results.filter(r => !r.ok).length;
-    ptext.textContent = `完成：${ok} 成功${fail ? ` / ${fail} 失败` : ""}`;
+    ptext.textContent = `完成：${ok} 成功${skipped ? ` / ${skipped} 跳过` : ""}${fail ? ` / ${fail} 失败` : ""}`;
 
-    if (ok > 0) {
+    if (ok > 0 || skipped > 0) {
       resizeExportBtn.style.display = "inline-flex";
       resizeExportBtn.disabled = false;
     }
 
     results.forEach(r => {
-      const el = document.createElement("div");
-      el.className = `result-item ${r.ok ? "ok" : "err"}`;
-      el.innerHTML = `<span class="result-icon">${r.ok ? "✓" : "✗"}</span>
-        <div><div class="result-file">${escHtml(r.file)}</div>
-        <div class="result-detail">${r.ok ? `→ ${escHtml(r.output)} (${r.size})` : escHtml(r.error)}</div></div>`;
-      rlist.appendChild(el);
+      appendResizeResultItem(r);
     });
 
-    toast(`处理完成：${ok} 张`, "success");
-    loadResizePreview(proj, true);
+    toast(`处理完成：${ok} 张${skipped ? `，跳过 ${skipped} 张` : ""}`, "success");
+    await loadResizePreview(proj, true);
   } catch (e) {
     toast("处理失败: " + e.message, "error");
     ptext.textContent = "失败: " + e.message;

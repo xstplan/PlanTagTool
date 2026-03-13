@@ -24,6 +24,7 @@ class ResizeSettings(BaseModel):
     quality: int = Field(90, ge=1, le=100)
     pad_color: str = "#ffffff"
     overwrite: bool = False
+    skip_existing: bool = False
     crop_focus_x: float = Field(0.5, ge=0.0, le=1.0)
     crop_focus_y: float = Field(0.5, ge=0.0, le=1.0)
     crop_focus_map: Dict[str, Dict[str, float]] = Field(default_factory=dict)
@@ -49,13 +50,7 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         if settings.output_format not in {"jpg", "png", "webp", "original"}:
             raise HTTPException(400, "Invalid output format")
 
-    def _process_resize_images(
-        project_dir: Path,
-        settings: ResizeSettings,
-        on_progress: Optional[Callable[[int, int, Optional[Dict[str, Any]]], None]] = None,
-    ) -> List[Dict[str, Any]]:
-        _validate_resize_settings(settings)
-
+    def _prepare_source_images(project_dir: Path) -> List[Path]:
         originals_dir = _originals_dir(project_dir)
         source_images = _iter_project_images(originals_dir)
 
@@ -71,6 +66,138 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
                     shutil.move(str(src_label), str(dst_label))
             source_images = _iter_project_images(originals_dir)
 
+        return source_images
+
+    def _get_output_ext(source_img: Image.Image, img_path: Path, output_format: str) -> str:
+        fmt_out = output_format
+        if fmt_out == "original":
+            fmt_out = source_img.format.lower() if source_img.format else img_path.suffix.lower().lstrip(".")
+            if fmt_out == "jpeg":
+                fmt_out = "jpg"
+        return {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}.get(fmt_out, "jpg")
+
+    def _find_existing_output_variant(project_dir: Path, index: int) -> Optional[Path]:
+        stem = f"{index + 1:04d}"
+        for candidate in sorted(project_dir.glob(f"{stem}.*")):
+            if candidate.is_file() and candidate.suffix.lower().lstrip(".") in {"jpg", "jpeg", "png", "webp", "bmp", "gif"}:
+                return candidate
+        return None
+
+    def _remove_output_variants_for_index(project_dir: Path, index: int, keep_name: str = "") -> None:
+        stem = f"{index + 1:04d}"
+        for candidate in project_dir.glob(f"{stem}.*"):
+            if not candidate.is_file():
+                continue
+            if candidate.suffix.lower().lstrip(".") not in {"jpg", "jpeg", "png", "webp", "bmp", "gif"}:
+                continue
+            if keep_name and candidate.name == keep_name:
+                continue
+            try:
+                candidate.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _read_image_size(img_path: Path) -> str:
+        try:
+            with Image.open(img_path) as existing_img:
+                w, h = existing_img.size
+                return f"{w}x{h}"
+        except Exception:
+            return ""
+
+    def _process_resize_one(project_dir: Path, index: int, img_path: Path, settings: ResizeSettings) -> Dict[str, Any]:
+        with Image.open(img_path) as source_img:
+            img = ImageOps.exif_transpose(source_img)
+
+            with Image.open(img_path) as format_probe:
+                out_ext = _get_output_ext(format_probe, img_path, settings.output_format)
+
+            existing_variant = _find_existing_output_variant(project_dir, index)
+            if settings.skip_existing and existing_variant and existing_variant.exists():
+                return {
+                    "file": img_path.name,
+                    "output": existing_variant.name,
+                    "ok": True,
+                    "skipped": True,
+                    "size": _read_image_size(existing_variant),
+                }
+
+            target_mode = "RGBA" if out_ext == "png" else "RGB"
+            if img.mode != target_mode:
+                img = img.convert(target_mode)
+
+            tw, th = settings.width, settings.height
+
+            if settings.mode == "crop":
+                focus_x = settings.crop_focus_x
+                focus_y = settings.crop_focus_y
+                per_file_focus = settings.crop_focus_map.get(img_path.name)
+                if isinstance(per_file_focus, dict):
+                    try:
+                        focus_x = max(0.0, min(1.0, float(per_file_focus.get("x", focus_x))))
+                        focus_y = max(0.0, min(1.0, float(per_file_focus.get("y", focus_y))))
+                    except Exception:
+                        focus_x = settings.crop_focus_x
+                        focus_y = settings.crop_focus_y
+
+                ratio = max(tw / img.width, th / img.height)
+                nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
+                img = img.resize((nw, nh), Image.LANCZOS)
+                left = int((nw - tw) * focus_x)
+                top = int((nh - th) * focus_y)
+                left = max(0, min(left, nw - tw))
+                top = max(0, min(top, nh - th))
+                img = img.crop((left, top, left + tw, top + th))
+            elif settings.mode == "fit":
+                ratio = min(tw / img.width, th / img.height)
+                nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
+                img = img.resize((nw, nh), Image.LANCZOS)
+            elif settings.mode == "stretch":
+                img = img.resize((tw, th), Image.LANCZOS)
+            elif settings.mode == "pad":
+                ratio = min(tw / img.width, th / img.height)
+                nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
+                resized = img.resize((nw, nh), Image.LANCZOS)
+                pad_rgb = _hex_to_rgb(settings.pad_color)
+                canvas = Image.new(target_mode, (tw, th), pad_rgb if target_mode == "RGB" else (*pad_rgb, 255))
+                x = (tw - nw) // 2
+                y = (th - nh) // 2
+                canvas.paste(resized, (x, y))
+                img = canvas
+
+            out_path = project_dir / f"{index + 1:04d}.{out_ext}"
+            _remove_output_variants_for_index(project_dir, index, keep_name=out_path.name)
+
+            save_kw = {}
+            pil_fmt = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}[out_ext]
+            if pil_fmt in {"JPEG", "WEBP"}:
+                save_kw["quality"] = settings.quality
+            if pil_fmt == "JPEG":
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                save_kw["optimize"] = False
+            elif pil_fmt == "PNG":
+                save_kw["compress_level"] = 1
+            elif pil_fmt == "WEBP":
+                save_kw["method"] = 0
+
+            img.save(out_path, format=pil_fmt, **save_kw)
+
+        return {
+            "file": img_path.name,
+            "output": out_path.name,
+            "ok": True,
+            "size": f"{settings.width}x{settings.height}" if settings.mode == "stretch" else _read_image_size(out_path),
+        }
+
+    def _process_resize_images(
+        project_dir: Path,
+        settings: ResizeSettings,
+        on_progress: Optional[Callable[[int, int, Optional[Dict[str, Any]]], None]] = None,
+    ) -> List[Dict[str, Any]]:
+        _validate_resize_settings(settings)
+        source_images = _prepare_source_images(project_dir)
+
         if not source_images:
             if on_progress:
                 on_progress(0, 0, None)
@@ -80,14 +207,14 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         shutil.rmtree(_thumbs_dir(project_dir), ignore_errors=True)
         _thumbs_dir(project_dir)
 
-        # Regenerate modified images from originals each run.
-        for old_img in _iter_project_images(project_dir):
-            old_img.unlink()
-        for old_label in project_dir.glob("*.txt"):
-            if old_label.is_file():
-                old_label.unlink()
+        if not settings.skip_existing:
+            # Regenerate modified images from originals each run unless user explicitly keeps existing outputs.
+            for old_img in _iter_project_images(project_dir):
+                old_img.unlink()
+            for old_label in project_dir.glob("*.txt"):
+                if old_label.is_file():
+                    old_label.unlink()
 
-        ext_map = {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
         total = len(source_images)
         if on_progress:
             on_progress(0, total, None)
@@ -95,83 +222,7 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         def process_one(item: Any) -> Any:
             index, img_path = item
             try:
-                with Image.open(img_path) as source_img:
-                    img = ImageOps.exif_transpose(source_img)
-
-                    fmt_out = settings.output_format
-                    if fmt_out == "original":
-                        fmt_out = source_img.format.lower() if source_img.format else img_path.suffix.lower().lstrip(".")
-                        if fmt_out == "jpeg":
-                            fmt_out = "jpg"
-
-                    out_ext = ext_map.get(fmt_out, "jpg")
-                    target_mode = "RGBA" if out_ext == "png" else "RGB"
-                    if img.mode != target_mode:
-                        img = img.convert(target_mode)
-
-                    tw, th = settings.width, settings.height
-
-                    if settings.mode == "crop":
-                        focus_x = settings.crop_focus_x
-                        focus_y = settings.crop_focus_y
-                        per_file_focus = settings.crop_focus_map.get(img_path.name)
-                        if isinstance(per_file_focus, dict):
-                            try:
-                                focus_x = max(0.0, min(1.0, float(per_file_focus.get("x", focus_x))))
-                                focus_y = max(0.0, min(1.0, float(per_file_focus.get("y", focus_y))))
-                            except Exception:
-                                focus_x = settings.crop_focus_x
-                                focus_y = settings.crop_focus_y
-
-                        ratio = max(tw / img.width, th / img.height)
-                        nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
-                        img = img.resize((nw, nh), Image.LANCZOS)
-                        left = int((nw - tw) * focus_x)
-                        top = int((nh - th) * focus_y)
-                        left = max(0, min(left, nw - tw))
-                        top = max(0, min(top, nh - th))
-                        img = img.crop((left, top, left + tw, top + th))
-                    elif settings.mode == "fit":
-                        ratio = min(tw / img.width, th / img.height)
-                        nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
-                        img = img.resize((nw, nh), Image.LANCZOS)
-                    elif settings.mode == "stretch":
-                        img = img.resize((tw, th), Image.LANCZOS)
-                    elif settings.mode == "pad":
-                        ratio = min(tw / img.width, th / img.height)
-                        nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
-                        resized = img.resize((nw, nh), Image.LANCZOS)
-                        pad_rgb = _hex_to_rgb(settings.pad_color)
-                        canvas = Image.new(target_mode, (tw, th), pad_rgb if target_mode == "RGB" else (*pad_rgb, 255))
-                        x = (tw - nw) // 2
-                        y = (th - nh) // 2
-                        canvas.paste(resized, (x, y))
-                        img = canvas
-
-                    # Deterministic output name: 0001.ext, 0002.ext ...
-                    out_path = project_dir / f"{index + 1:04d}.{out_ext}"
-
-                    save_kw = {}
-                    pil_fmt = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}[out_ext]
-                    if pil_fmt in {"JPEG", "WEBP"}:
-                        save_kw["quality"] = settings.quality
-                    if pil_fmt == "JPEG":
-                        if img.mode != "RGB":
-                            img = img.convert("RGB")
-                        save_kw["optimize"] = False
-                    elif pil_fmt == "PNG":
-                        save_kw["compress_level"] = 1
-                    elif pil_fmt == "WEBP":
-                        save_kw["method"] = 0
-
-                    img.save(out_path, format=pil_fmt, **save_kw)
-
-                    result_item: Dict[str, Any] = {
-                        "file": img_path.name,
-                        "output": out_path.name,
-                        "ok": True,
-                        "size": f"{img.width}x{img.height}",
-                    }
+                result_item = _process_resize_one(project_dir, index, img_path, settings)
             except Exception as exc:
                 result_item = {"file": img_path.name, "ok": False, "error": str(exc)}
             return index, result_item
@@ -255,6 +306,30 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         _validate_resize_settings(settings)
         results = await _run_in_thread(_process_resize_images, project_dir, settings, None)
         return {"results": results}
+
+    @app.post("/api/projects/{name}/resize-single/{filename}")
+    async def resize_single_image(name: str, filename: str, settings: ResizeSettings):
+        project_dir = _project_dir(name, must_exist=True)
+        _validate_resize_settings(settings)
+        source_images = _prepare_source_images(project_dir)
+        if not source_images:
+            raise HTTPException(404, "No source images found")
+
+        matched_index = -1
+        matched_path: Optional[Path] = None
+        for index, img_path in enumerate(source_images):
+            if img_path.name == filename:
+                matched_index = index
+                matched_path = img_path
+                break
+
+        if matched_path is None:
+            raise HTTPException(404, "Image not found")
+
+        shutil.rmtree(_thumbs_dir(project_dir), ignore_errors=True)
+        _thumbs_dir(project_dir)
+        result = await _run_in_thread(_process_resize_one, project_dir, matched_index, matched_path, settings)
+        return result
 
     @app.post("/api/projects/{name}/resize/start")
     async def start_resize_job(name: str, settings: ResizeSettings):

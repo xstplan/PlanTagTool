@@ -224,6 +224,10 @@
                 <input type="checkbox" id="resize-overwrite" />
                 <label for="resize-overwrite">覆盖原文件（不创建新文件）</label>
               </div>
+              <div class="toggle-row">
+                <input type="checkbox" id="resize-skip-existing" />
+                <label for="resize-skip-existing">批量处理时跳过已存在图片</label>
+              </div>
             </div>
 
             <button class="btn btn-primary" id="btn-do-resize" style="width:100%">
@@ -517,6 +521,10 @@
 
 <div class="context-menu hidden" id="label-context-menu">
   <button class="context-menu-item" id="label-context-single" type="button">按当前设置单独打标</button>
+</div>
+
+<div class="context-menu hidden" id="resize-context-menu">
+  <button class="context-menu-item" id="resize-context-single" type="button">按当前设置单独处理</button>
 </div>
 
 <script src="/static/js/app.js?v=__ASSET_VERSION__"></script>
