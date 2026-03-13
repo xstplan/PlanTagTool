@@ -131,16 +131,19 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
             if settings.mode == "crop":
                 focus_x = settings.crop_focus_x
                 focus_y = settings.crop_focus_y
+                zoom = 1.0
                 per_file_focus = settings.crop_focus_map.get(img_path.name)
                 if isinstance(per_file_focus, dict):
                     try:
                         focus_x = max(0.0, min(1.0, float(per_file_focus.get("x", focus_x))))
                         focus_y = max(0.0, min(1.0, float(per_file_focus.get("y", focus_y))))
+                        zoom = max(1.0, min(8.0, float(per_file_focus.get("zoom", zoom))))
                     except Exception:
                         focus_x = settings.crop_focus_x
                         focus_y = settings.crop_focus_y
+                        zoom = 1.0
 
-                ratio = max(tw / img.width, th / img.height)
+                ratio = max(tw / img.width, th / img.height) * zoom
                 nw, nh = max(1, int(img.width * ratio)), max(1, int(img.height * ratio))
                 img = img.resize((nw, nh), Image.LANCZOS)
                 left = int((nw - tw) * focus_x)

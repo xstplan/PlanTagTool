@@ -96,6 +96,10 @@ function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
+function clampCropZoom(v) {
+  return Math.max(1, Math.min(8, Number(v) || 1));
+}
+
 function setRect(el, x, y, w, h) {
   el.style.left = `${x}px`;
   el.style.top = `${y}px`;
@@ -145,8 +149,15 @@ function ensureCropFocusMap() {
   });
   resizePreviewImages.forEach(img => {
     if (!cropFocusByFile[img.filename]) {
-      cropFocusByFile[img.filename] = { x: 0.5, y: 0.5 };
+      cropFocusByFile[img.filename] = { x: 0.5, y: 0.5, zoom: 1 };
+      return;
     }
+    const focus = cropFocusByFile[img.filename];
+    cropFocusByFile[img.filename] = {
+      x: clamp01(Number(focus.x)),
+      y: clamp01(Number(focus.y)),
+      zoom: clampCropZoom(focus.zoom),
+    };
   });
 }
 
@@ -155,11 +166,18 @@ function getCropFocus(filename) {
   return {
     x: focus ? clamp01(Number(focus.x)) : 0.5,
     y: focus ? clamp01(Number(focus.y)) : 0.5,
+    zoom: focus ? clampCropZoom(focus.zoom) : 1,
   };
 }
 
 function setCropFocus(filename, x, y) {
-  cropFocusByFile[filename] = { x: clamp01(x), y: clamp01(y) };
+  const current = getCropFocus(filename);
+  cropFocusByFile[filename] = { x: clamp01(x), y: clamp01(y), zoom: current.zoom };
+}
+
+function setCropZoom(filename, zoom) {
+  const current = getCropFocus(filename);
+  cropFocusByFile[filename] = { x: current.x, y: current.y, zoom: clampCropZoom(zoom) };
 }
 
 function setResizeActiveCard(cardEl, img) {
@@ -209,7 +227,7 @@ function scheduleRefreshResizeThumbLayouts(delay = 40) {
   }, delay);
 }
 
-function calcCropLayout(stageW, stageH, imgW, imgH, outW, outH, focusX, focusY) {
+function calcCropLayout(stageW, stageH, imgW, imgH, outW, outH, focusX, focusY, zoom = 1) {
   const targetRatio = outW / outH;
 
   let cropW = stageW;
@@ -222,11 +240,18 @@ function calcCropLayout(stageW, stageH, imgW, imgH, outW, outH, focusX, focusY) 
   const cropX = (stageW - cropW) / 2;
   const cropY = (stageH - cropH) / 2;
 
-  const scale = Math.min(stageW / imgW, stageH / imgH);
-  const dispW = imgW * scale;
-  const dispH = imgH * scale;
-  const baseX = (stageW - dispW) / 2;
-  const baseY = (stageH - dispH) / 2;
+  // Preview must use the same "cover crop area" basis as backend crop mode,
+  // otherwise zoomed previews can show black gaps and mismatched focus.
+  const scale = Math.max(cropW / imgW, cropH / imgH) * clampCropZoom(zoom);
+  let dispW = imgW * scale;
+  let dispH = imgH * scale;
+  if (dispW < cropW || dispH < cropH) {
+    const coverFix = Math.max(cropW / Math.max(1, dispW), cropH / Math.max(1, dispH), 1);
+    dispW *= coverFix;
+    dispH *= coverFix;
+  }
+  const baseX = cropX + (cropW - dispW) / 2;
+  const baseY = cropY + (cropH - dispH) / 2;
 
   const extraX = Math.max(0, dispW - cropW);
   const extraY = Math.max(0, dispH - cropH);
@@ -273,8 +298,6 @@ function renderResizeThumbs() {
     return;
   }
 
-  const outSize = getResizeTargetSize();
-
   renderNodesInChunks({
     container: grid,
     items,
@@ -319,17 +342,21 @@ function renderResizeThumbs() {
         hline.className = "resize-thumb-frame-line resize-thumb-frame-line-h";
         frame.appendChild(vline);
         frame.appendChild(hline);
+        const zoomHandle = document.createElement("div");
+        zoomHandle.className = "resize-thumb-handle";
+        zoomHandle.title = "拖动这里缩放图片";
 
         const applyLayout = (withGridRelayout = true) => {
           const nW = image.naturalWidth || srcW;
           const nH = image.naturalHeight || srcH;
+          const outSize = getResizeTargetSize();
           stage.style.aspectRatio = `${nW} / ${nH}`;
 
           const stageRect = stage.getBoundingClientRect();
           const stageW = Math.max(1, stageRect.width);
           const stageH = Math.max(1, stageRect.height);
           const focus = getCropFocus(img.filename);
-          const layout = calcCropLayout(stageW, stageH, nW, nH, outSize.w, outSize.h, focus.x, focus.y);
+          const layout = calcCropLayout(stageW, stageH, nW, nH, outSize.w, outSize.h, focus.x, focus.y, focus.zoom);
           stage._cropLayout = layout;
 
           setRect(image, layout.imgX, layout.imgY, layout.dispW, layout.dispH);
@@ -338,6 +365,14 @@ function renderResizeThumbs() {
           setRect(maskLeft, 0, layout.cropY, layout.cropX, layout.cropH);
           setRect(maskRight, layout.cropX + layout.cropW, layout.cropY, Math.max(0, stageW - layout.cropX - layout.cropW), layout.cropH);
           setRect(frame, layout.cropX, layout.cropY, layout.cropW, layout.cropH);
+          const handleSize = 34;
+          setRect(
+            zoomHandle,
+            layout.cropX + layout.cropW - handleSize - 6,
+            layout.cropY + layout.cropH - handleSize - 6,
+            handleSize,
+            handleSize,
+          );
           if (withGridRelayout) {
             scheduleGridRelayout();
           }
@@ -345,6 +380,7 @@ function renderResizeThumbs() {
         stage._applyResizeLayout = () => applyLayout(false);
 
         let drag = null;
+        let zoomDrag = null;
         const finishDrag = e => {
           if (!drag || e.pointerId !== drag.pointerId) return;
           drag = null;
@@ -354,8 +390,18 @@ function renderResizeThumbs() {
             stage.releasePointerCapture(e.pointerId);
           }
         };
+        const finishZoomDrag = e => {
+          if (!zoomDrag || e.pointerId !== zoomDrag.pointerId) return;
+          zoomDrag = null;
+          resizeIsDraggingCrop = false;
+          zoomHandle.classList.remove("dragging");
+          if (zoomHandle.hasPointerCapture(e.pointerId)) {
+            zoomHandle.releasePointerCapture(e.pointerId);
+          }
+        };
 
         stage.addEventListener("pointerdown", e => {
+          if (e.target.closest(".resize-thumb-handle")) return;
           if (resizeMode !== "crop") return;
           const layout = stage._cropLayout;
           if (!layout) return;
@@ -391,8 +437,42 @@ function renderResizeThumbs() {
         stage.addEventListener("pointerup", finishDrag);
         stage.addEventListener("pointercancel", finishDrag);
 
+        zoomHandle.addEventListener("pointerdown", e => {
+          if (resizeMode !== "crop") return;
+          const layout = stage._cropLayout;
+          if (!layout) return;
+          const focus = getCropFocus(img.filename);
+          zoomDrag = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            startZoom: focus.zoom,
+            refSize: Math.max(120, Math.min(layout.cropW, layout.cropH)),
+          };
+          resizeIsDraggingCrop = true;
+          zoomHandle.classList.add("dragging");
+          zoomHandle.setPointerCapture(e.pointerId);
+          e.preventDefault();
+          e.stopPropagation();
+        });
+
+        zoomHandle.addEventListener("pointermove", e => {
+          if (!zoomDrag || e.pointerId !== zoomDrag.pointerId) return;
+          const dx = e.clientX - zoomDrag.startX;
+          const dy = e.clientY - zoomDrag.startY;
+          const factor = 1 + ((dx + dy) / zoomDrag.refSize);
+          setCropZoom(img.filename, zoomDrag.startZoom * factor);
+          applyLayout(false);
+          e.preventDefault();
+        });
+
+        zoomHandle.addEventListener("pointerup", finishZoomDrag);
+        zoomHandle.addEventListener("pointercancel", finishZoomDrag);
+
         image.addEventListener("load", () => applyLayout(true));
-        image.src = img.thumb_url || img.url;
+        image.loading = "lazy";
+        image.decoding = "async";
+        image.src = img.url || img.thumb_url;
 
         // Cached images may complete before a visible paint; ensure layout refreshes with real natural size.
         requestAnimationFrame(() => applyLayout(true));
@@ -403,6 +483,7 @@ function renderResizeThumbs() {
         stage.appendChild(maskLeft);
         stage.appendChild(maskRight);
         stage.appendChild(frame);
+        stage.appendChild(zoomHandle);
       } else {
         const image = document.createElement("img");
         image.className = "resize-thumb-image-plain";

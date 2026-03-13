@@ -91,9 +91,14 @@ def _image_path(project_dir: Path, filename: str, must_exist: bool = True) -> Pa
 def _iter_project_images(project_dir: Path) -> List[Path]:
     return sorted(
         [p for p in project_dir.iterdir() if p.is_file() and _is_supported_image(p.name)],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
+        key=lambda p: (-p.stat().st_mtime, p.name.lower()),
     )
+
+
+def _is_numbered_output_set(images: List[Path]) -> bool:
+    if not images:
+        return False
+    return all(p.stem.isdigit() for p in images)
 
 
 def _originals_dir(project_dir: Path) -> Path:
@@ -124,6 +129,8 @@ def _active_images(project_dir: Path) -> List[Path]:
     # Prefer resized outputs in project root; fallback to originals.
     root_images = _iter_project_images(project_dir)
     if root_images:
+        if _is_numbered_output_set(root_images):
+            return sorted(root_images, key=lambda p: p.name.lower())
         return root_images
     return _iter_project_images(_originals_dir(project_dir))
 

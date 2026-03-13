@@ -99,7 +99,7 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
                     "labeled": label_file.exists() and bool(label),
                     "label": label,
                     "size": stat.st_size,
-                    "url": f"/projects/{quote(project_name)}/{quote(rel_path, safe='/')}",
+                    "url": f"/projects/{quote(project_name)}/{quote(rel_path, safe='/')}?v={version}",
                     "thumb_url": (
                         f"/api/projects/{quote(project_name)}/thumbnails/{quote(img_path.name)}"
                         f"?w=640&v={version}"
