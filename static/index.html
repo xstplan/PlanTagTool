@@ -58,11 +58,12 @@
                 <div class="card-title">上传图片</div>
                 <div class="drop-zone" id="drop-zone">
                   <div class="drop-zone-icon">📸</div>
-                  <div class="drop-zone-text">拖拽图片或文件夹到此处</div>
-                  <div class="drop-zone-sub">支持 JPG · PNG · WebP · BMP · GIF &nbsp;|&nbsp; 可多选</div>
+                  <div class="drop-zone-text">拖拽、选择或粘贴图片到此处</div>
+                  <div class="drop-zone-sub">支持 JPG · PNG · WebP · BMP · GIF &nbsp;|&nbsp; 可多选 &nbsp;|&nbsp; Ctrl+V 粘贴</div>
                   <div class="flex gap-8 items-center" style="justify-content:center;margin-top:12px">
                     <button class="btn btn-ghost btn-sm" id="btn-pick-files" type="button">选择图片</button>
                     <button class="btn btn-ghost btn-sm" id="btn-pick-folder" type="button">选择文件夹</button>
+                    <button class="btn btn-ghost btn-sm" id="btn-paste-files" type="button">粘贴图片</button>
                   </div>
                 </div>
                 <div class="upload-progress-wrap hidden" id="upload-progress-wrap">
@@ -80,6 +81,10 @@
                 <div class="img-grid-header">
                   <div class="card-title" style="margin-bottom:0">图片列表</div>
                   <div class="flex gap-8 items-center">
+                    <div class="format-btns" id="dataset-source-switch">
+                      <button class="format-btn active" id="dataset-source-original" data-dataset-source="original" type="button">原图</button>
+                      <button class="format-btn" id="dataset-source-active" data-dataset-source="active" type="button">处理图</button>
+                    </div>
                     <span class="img-count" id="img-count"></span>
                     <button class="btn btn-ghost btn-sm" id="btn-refresh-imgs">刷新</button>
                     <button class="btn btn-danger btn-sm" id="btn-clear-labels">清除所有标注</button>

@@ -4,6 +4,7 @@
 let datasetSelectedProject = "";
 let datasetSelectedFilename = "";
 let renameTargetProject = "";
+let datasetImageSource = "original";
 
 const datasetDetail = createImageDetailPanelController({
   gridSelector: "#img-grid",
@@ -28,6 +29,16 @@ function clearDatasetDetailPanel(message = "点击图片查看和编辑详细信
 
 function showDatasetDetail(img, projectName = State.currentProject, card = null) {
   datasetDetail.show(img, projectName, card);
+}
+
+function getDatasetSourceLabel() {
+  return datasetImageSource === "active" ? "处理图" : "原图";
+}
+
+function updateDatasetSourceSwitch() {
+  document.querySelectorAll("[data-dataset-source]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.datasetSource === datasetImageSource);
+  });
 }
 
 async function loadProjects() {
@@ -106,14 +117,11 @@ async function loadImages() {
   if (!State.currentProject) return;
   const loadToken = ++datasetLoadToken;
   try {
-    const images = await api("GET", `${projectApi(State.currentProject)}/images`);
+    const images = await api("GET", `${projectApi(State.currentProject)}/images?source=${encPath(datasetImageSource)}`);
     if (loadToken !== datasetLoadToken) return;
     State.images = images;
     renderImageGrid();
-    datasetDetail.sync(State.images, State.currentProject, { emptyMessage: "项目中没有图片" });
-    const p = State.projects.find(x => x.name === State.currentProject);
-    if (p) p.image_count = State.images.length;
-    syncProjectSelects();
+    datasetDetail.sync(State.images, State.currentProject, { emptyMessage: `项目中没有${getDatasetSourceLabel()}` });
   } catch (e) {
     if (loadToken !== datasetLoadToken) return;
     toast("加载图片失败: " + e.message, "error");
@@ -124,13 +132,13 @@ function renderImageGrid() {
   const renderToken = ++datasetRenderToken;
   const grid = document.getElementById("img-grid");
   const count = document.getElementById("img-count");
-  count.textContent = `${State.images.length} 张图片`;
+  count.textContent = `${State.images.length} 张${getDatasetSourceLabel()}`;
   grid.replaceChildren();
   if (!State.images.length) {
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
       <div class="empty-state-icon">📲</div>
-      <div class="empty-state-text">还没有图片</div>
-      <div class="empty-state-sub">拖拽图片到上方区域上传</div>
+      <div class="empty-state-text">还没有${getDatasetSourceLabel()}</div>
+      <div class="empty-state-sub">${datasetImageSource === "original" ? "拖拽图片到上方区域上传" : "先到图片处理页面生成处理后的图片"}</div>
     </div>`;
     return;
   }
@@ -327,6 +335,7 @@ const fileInput = document.getElementById("file-input");
 const folderInput = document.getElementById("folder-input");
 const pickFilesBtn = document.getElementById("btn-pick-files");
 const pickFolderBtn = document.getElementById("btn-pick-folder");
+const pasteFilesBtn = document.getElementById("btn-paste-files");
 const uploadProgressWrap = document.getElementById("upload-progress-wrap");
 const uploadPbar = document.getElementById("upload-pbar");
 const uploadPtext = document.getElementById("upload-ptext");
@@ -334,6 +343,35 @@ let uploadInProgress = false;
 
 function isImageFile(filename) {
   return /\.(jpe?g|png|webp|bmp|gif)$/i.test(filename || "");
+}
+
+function isEditableTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  return Boolean(target.closest("input, textarea, [contenteditable='true'], [contenteditable=''], select"));
+}
+
+function extensionFromMime(type) {
+  const mime = String(type || "").toLowerCase();
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/bmp") return "bmp";
+  if (mime === "image/gif") return "gif";
+  return "png";
+}
+
+function createClipboardImageFile(blob, index = 0) {
+  if (!blob) return null;
+  if (blob instanceof File && blob.name && isImageFile(blob.name)) {
+    return blob;
+  }
+  const ext = extensionFromMime(blob.type);
+  const timestamp = Date.now();
+  const name = `pasted_${timestamp}_${index + 1}.${ext}`;
+  return new File([blob], name, {
+    type: blob.type || `image/${ext}`,
+    lastModified: timestamp,
+  });
 }
 
 async function readDirectoryEntries(reader) {
@@ -390,6 +428,47 @@ async function collectDroppedFiles(dataTransfer) {
   return files;
 }
 
+function collectClipboardFiles(clipboardData) {
+  const files = [];
+  const addFile = file => {
+    if (!file || files.length >= 1) return;
+    const normalized = createClipboardImageFile(file, files.length);
+    if (!normalized || !isImageFile(normalized.name)) return;
+    files.push(normalized);
+  };
+
+  Array.from(clipboardData?.files || []).forEach(addFile);
+  Array.from(clipboardData?.items || []).forEach(item => {
+    if (item.kind !== "file") return;
+    const file = item.getAsFile?.();
+    if (file && String(file.type || "").startsWith("image/")) {
+      addFile(file);
+    }
+  });
+
+  return files;
+}
+
+async function readClipboardFilesFromNavigator() {
+  if (!navigator.clipboard?.read) {
+    throw new Error("当前浏览器不支持系统剪贴板读取");
+  }
+
+  const items = await navigator.clipboard.read();
+
+  for (const item of items) {
+    for (const type of item.types || []) {
+      if (!String(type || "").startsWith("image/")) continue;
+      const blob = await item.getType(type);
+      const file = createClipboardImageFile(blob, 0);
+      if (!file || !isImageFile(file.name)) continue;
+      return [file];
+    }
+  }
+
+  return [];
+}
+
 function formatBytes(bytes) {
   const b = Number(bytes || 0);
   if (b < 1024) return `${b} B`;
@@ -405,6 +484,7 @@ function setUploadUiState(isUploading) {
   uploadInProgress = isUploading;
   pickFilesBtn.disabled = isUploading;
   pickFolderBtn.disabled = isUploading;
+  if (pasteFilesBtn) pasteFilesBtn.disabled = isUploading;
   dropZone.classList.toggle("uploading", isUploading);
 }
 
@@ -433,6 +513,28 @@ function uploadWithProgress(path, formData, onProgress) {
   });
 }
 
+async function uploadClipboardImages(clipboardData = null) {
+  if (uploadInProgress) {
+    toast("正在上传中，请稍后...", "info");
+    return;
+  }
+  if (!State.currentProject) {
+    toast("请先选择项目，再粘贴图片", "error");
+    return;
+  }
+
+  let files = collectClipboardFiles(clipboardData);
+  if (!files.length) {
+    files = await readClipboardFilesFromNavigator();
+  }
+  if (!files.length) {
+    throw new Error("剪贴板中没有可上传的图片");
+  }
+
+  toast("检测到剪贴板图片，开始上传", "info");
+  await handleFiles(files);
+}
+
 if (pickFilesBtn && fileInput) {
   pickFilesBtn.addEventListener("click", e => {
     e.stopPropagation();
@@ -443,6 +545,16 @@ if (pickFolderBtn && folderInput) {
   pickFolderBtn.addEventListener("click", e => {
     e.stopPropagation();
     folderInput.click();
+  });
+}
+if (pasteFilesBtn) {
+  pasteFilesBtn.addEventListener("click", async e => {
+    e.stopPropagation();
+    try {
+      await uploadClipboardImages(null);
+    } catch (err) {
+      toast("粘贴失败: " + err.message, "error");
+    }
   });
 }
 if (dropZone && fileInput) {
@@ -511,7 +623,31 @@ async function handleFiles(files) {
   }
 }
 
+window.addEventListener("paste", async event => {
+  const datasetPanel = document.getElementById("panel-dataset");
+  if (!datasetPanel?.classList.contains("active")) return;
+  if (isEditableTarget(event.target)) return;
+
+  event.preventDefault();
+  try {
+    await uploadClipboardImages(event.clipboardData);
+  } catch (err) {
+    toast("粘贴失败: " + err.message, "error");
+  }
+}, true);
+
 document.getElementById("btn-refresh-imgs")?.addEventListener("click", loadImages);
+
+document.querySelectorAll("[data-dataset-source]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const nextSource = btn.dataset.datasetSource || "original";
+    if (nextSource === datasetImageSource) return;
+    datasetImageSource = nextSource;
+    updateDatasetSourceSwitch();
+    clearDatasetDetailPanel(`点击${getDatasetSourceLabel()}查看和编辑详细信息`);
+    await loadImages();
+  });
+});
 
 document.getElementById("btn-clear-labels")?.addEventListener("click", async () => {
   if (!State.currentProject) return;
@@ -610,5 +746,6 @@ async function refreshLabelRelatedViews(projectName) {
 // =====================================================================
 
 // Init dataset tab
+updateDatasetSourceSwitch();
 clearDatasetDetailPanel();
 loadProjects();
