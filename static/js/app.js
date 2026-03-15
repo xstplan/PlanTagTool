@@ -100,6 +100,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (tab === "dataset") { loadProjects(); if (State.currentProject) loadImages(); }
     if (tab === "resize") initResizeTab();
     if (tab === "label")  initLabelTab();
+    if (tab === "manual") initManualTab();
   });
 });
 

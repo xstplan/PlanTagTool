@@ -95,8 +95,9 @@ function renderProjectList() {
 }
 
 function syncProjectSelects() {
-  ["resize-proj-select", "label-proj-select"].forEach(id => {
+  ["resize-proj-select", "label-proj-select", "manual-proj-select"].forEach(id => {
     const sel = document.getElementById(id);
+    if (!sel) return;
     const cur = sel.value;
     sel.innerHTML = `<option value="">-- 请选择项目 --</option>`;
     State.projects.forEach(p => {
@@ -246,6 +247,9 @@ function syncRenamedProjectRefs(oldName, newName) {
   if (typeof labelSelectedProject !== "undefined" && labelSelectedProject === oldName) {
     labelSelectedProject = newName;
   }
+  if (typeof manualSelectedProject !== "undefined" && manualSelectedProject === oldName) {
+    manualSelectedProject = newName;
+  }
 
   const resizeSel = document.getElementById("resize-proj-select");
   if (resizeSel && resizeSel.value === oldName) {
@@ -254,6 +258,10 @@ function syncRenamedProjectRefs(oldName, newName) {
   const labelSel = document.getElementById("label-proj-select");
   if (labelSel && labelSel.value === oldName) {
     labelSel.value = newName;
+  }
+  const manualSel = document.getElementById("manual-proj-select");
+  if (manualSel && manualSel.value === oldName) {
+    manualSel.value = newName;
   }
 }
 
@@ -742,6 +750,10 @@ async function refreshLabelRelatedViews(projectName) {
   const labelProj = document.getElementById("label-proj-select").value;
   if (projectName && labelProj === projectName) {
     tasks.push(loadLabelImages(projectName));
+  }
+  const manualProj = document.getElementById("manual-proj-select")?.value;
+  if (projectName && manualProj === projectName && typeof loadManualImages === "function") {
+    tasks.push(loadManualImages(projectName));
   }
   if (!tasks.length && State.currentProject) {
     tasks.push(loadImages());

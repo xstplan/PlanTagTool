@@ -813,6 +813,182 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   }
 }
 
+/* ── Manual Tag Panel ─────────────────────────────────────────────────────── */
+#panel-manual .content {
+  overflow: hidden;
+}
+
+.manual-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr) 420px;
+  gap: 16px;
+  align-items: start;
+  min-height: 420px;
+  height: var(--manual-pane-h, 70vh);
+}
+
+.manual-left {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+}
+
+.manual-mid {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.manual-detail-col {
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.manual-detail-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.manual-left::-webkit-scrollbar,
+.manual-mid::-webkit-scrollbar,
+.manual-detail-col::-webkit-scrollbar {
+  width: 6px;
+}
+
+.manual-card-check-wrap {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(10, 12, 20, .78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+.manual-card-check {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+#manual-img-grid .img-card.checked {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(109, 88, 255, .35);
+}
+
+#manual-img-grid .img-card.focused {
+  border-color: var(--success);
+  box-shadow: 0 0 0 2px rgba(67, 217, 173, .35);
+}
+
+.manual-tag-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.manual-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(109, 88, 255, .28);
+  background: rgba(109, 88, 255, .10);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.manual-tag-chip.shared {
+  border-color: rgba(67, 217, 173, .36);
+  background: rgba(67, 217, 173, .12);
+}
+
+.manual-tag-chip.unique {
+  border-color: rgba(255, 163, 72, .36);
+  background: rgba(255, 163, 72, .12);
+}
+
+.manual-tag-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.manual-tag-chip-del {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.manual-tag-chip-del:hover {
+  color: var(--error);
+}
+
+.manual-tag-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+#manual-detail-text {
+  min-height: 220px;
+  height: 260px;
+}
+
+@media (max-width: 1100px) {
+  #panel-manual .content {
+    overflow-y: auto;
+  }
+
+  .manual-layout {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .manual-left,
+  .manual-mid,
+  .manual-detail-col {
+    position: static;
+    max-height: none;
+    height: auto;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .manual-detail-sticky {
+    position: static;
+  }
+}
+
 .mode-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

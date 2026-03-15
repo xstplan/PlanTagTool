@@ -23,6 +23,7 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 from scripts.server_dataset import register_dataset_routes
+from scripts.server_manual import register_manual_routes
 from scripts.server_resize import register_resize_routes
 from scripts.server_label import register_label_routes
 
@@ -471,6 +472,7 @@ _route_ctx = {
 register_dataset_routes(app, _route_ctx)
 register_resize_routes(app, _route_ctx)
 register_label_routes(app, _route_ctx)
+register_manual_routes(app, _route_ctx)
 
 
 if __name__ == "__main__":
