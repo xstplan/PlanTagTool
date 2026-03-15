@@ -33,6 +33,7 @@ class ResizeSettings(BaseModel):
 def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
     _project_dir = ctx["_project_dir"]
     _originals_dir = ctx["_originals_dir"]
+    _generated_dir = ctx["_generated_dir"]
     _iter_project_images = ctx["_iter_project_images"]
     _thumbs_dir = ctx["_thumbs_dir"]
     _ensure_unique_path = ctx["_ensure_unique_path"]
@@ -57,6 +58,8 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         # Backward compatibility: if originals dir is empty, migrate current root images as originals.
         if not source_images:
             migrated = _iter_project_images(project_dir)
+            if not migrated:
+                migrated = _iter_project_images(_generated_dir(project_dir))
             for img_path in migrated:
                 dest = _ensure_unique_path(originals_dir, img_path.name)
                 shutil.move(str(img_path), str(dest))
@@ -76,16 +79,16 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
                 fmt_out = "jpg"
         return {"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}.get(fmt_out, "jpg")
 
-    def _find_existing_output_variant(project_dir: Path, index: int) -> Optional[Path]:
+    def _find_existing_output_variant(output_dir: Path, index: int) -> Optional[Path]:
         stem = f"{index + 1:04d}"
-        for candidate in sorted(project_dir.glob(f"{stem}.*")):
+        for candidate in sorted(output_dir.glob(f"{stem}.*")):
             if candidate.is_file() and candidate.suffix.lower().lstrip(".") in {"jpg", "jpeg", "png", "webp", "bmp", "gif"}:
                 return candidate
         return None
 
-    def _remove_output_variants_for_index(project_dir: Path, index: int, keep_name: str = "") -> None:
+    def _remove_output_variants_for_index(output_dir: Path, index: int, keep_name: str = "") -> None:
         stem = f"{index + 1:04d}"
-        for candidate in project_dir.glob(f"{stem}.*"):
+        for candidate in output_dir.glob(f"{stem}.*"):
             if not candidate.is_file():
                 continue
             if candidate.suffix.lower().lstrip(".") not in {"jpg", "jpeg", "png", "webp", "bmp", "gif"}:
@@ -106,13 +109,14 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
             return ""
 
     def _process_resize_one(project_dir: Path, index: int, img_path: Path, settings: ResizeSettings) -> Dict[str, Any]:
+        output_dir = _generated_dir(project_dir)
         with Image.open(img_path) as source_img:
             img = ImageOps.exif_transpose(source_img)
 
             with Image.open(img_path) as format_probe:
                 out_ext = _get_output_ext(format_probe, img_path, settings.output_format)
 
-            existing_variant = _find_existing_output_variant(project_dir, index)
+            existing_variant = _find_existing_output_variant(output_dir, index)
             if settings.skip_existing and existing_variant and existing_variant.exists():
                 return {
                     "file": img_path.name,
@@ -168,8 +172,8 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
                 canvas.paste(resized, (x, y))
                 img = canvas
 
-            out_path = project_dir / f"{index + 1:04d}.{out_ext}"
-            _remove_output_variants_for_index(project_dir, index, keep_name=out_path.name)
+            out_path = output_dir / f"{index + 1:04d}.{out_ext}"
+            _remove_output_variants_for_index(output_dir, index, keep_name=out_path.name)
 
             save_kw = {}
             pil_fmt = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}[out_ext]
@@ -209,12 +213,13 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         # Clear cached thumbnails; resized outputs will be regenerated.
         shutil.rmtree(_thumbs_dir(project_dir), ignore_errors=True)
         _thumbs_dir(project_dir)
+        output_dir = _generated_dir(project_dir)
 
         if not settings.skip_existing:
             # Regenerate modified images from originals each run unless user explicitly keeps existing outputs.
-            for old_img in _iter_project_images(project_dir):
+            for old_img in _iter_project_images(output_dir):
                 old_img.unlink()
-            for old_label in project_dir.glob("*.txt"):
+            for old_label in output_dir.glob("*.txt"):
                 if old_label.is_file():
                     old_label.unlink()
 
@@ -374,7 +379,8 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
     @app.get("/api/projects/{name}/resize/export")
     async def export_resize_results(name: str):
         project_dir = _project_dir(name, must_exist=True)
-        output_images = _iter_project_images(project_dir)
+        output_dir = _generated_dir(project_dir)
+        output_images = _iter_project_images(output_dir)
         if not output_images:
             raise HTTPException(404, "No resized output images to export")
 
@@ -385,7 +391,7 @@ def register_resize_routes(app: Any, ctx: Dict[str, Any]) -> None:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for img_path in sorted(output_images, key=lambda p: p.name):
                 zf.write(img_path, arcname=img_path.name)
-            for txt_path in sorted(project_dir.glob("*.txt"), key=lambda p: p.name):
+            for txt_path in sorted(output_dir.glob("*.txt"), key=lambda p: p.name):
                 if txt_path.is_file():
                     zf.write(txt_path, arcname=txt_path.name)
 

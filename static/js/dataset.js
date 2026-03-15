@@ -35,6 +35,14 @@ function getDatasetSourceLabel() {
   return datasetImageSource === "active" ? "处理图" : "原图";
 }
 
+function datasetImageApi(filename) {
+  return `${projectImageApi(State.currentProject, filename)}?source=${encPath(datasetImageSource)}`;
+}
+
+function datasetLabelApi(projectName, filename) {
+  return `${projectLabelApi(projectName, filename)}?source=${encPath(datasetImageSource)}`;
+}
+
 function updateDatasetSourceSwitch() {
   document.querySelectorAll("[data-dataset-source]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.datasetSource === datasetImageSource);
@@ -321,7 +329,7 @@ async function deleteProject(name) {
 async function deleteImage(filename) {
   if (!confirm(`删除图片 "${filename}"？`)) return;
   try {
-    await api("DELETE", projectImageApi(State.currentProject, filename));
+    await api("DELETE", datasetImageApi(filename));
     await loadImages();
     toast("图片已删除", "info");
   } catch (e) {
@@ -672,7 +680,7 @@ document.getElementById("dataset-detail-save")?.addEventListener("click", async 
   fd.append("label", label);
 
   try {
-    await api("PUT", projectLabelApi(datasetSelectedProject, datasetSelectedFilename), fd, true);
+    await api("PUT", datasetLabelApi(datasetSelectedProject, datasetSelectedFilename), fd, true);
     toast("标注已保存", "success");
     await refreshLabelRelatedViews(datasetSelectedProject);
   } catch (e) {
@@ -687,7 +695,7 @@ document.getElementById("dataset-detail-del-label")?.addEventListener("click", a
   }
 
   try {
-    await api("DELETE", projectLabelApi(datasetSelectedProject, datasetSelectedFilename));
+    await api("DELETE", datasetLabelApi(datasetSelectedProject, datasetSelectedFilename));
     toast("标注已删除", "info");
     await refreshLabelRelatedViews(datasetSelectedProject);
   } catch (e) {

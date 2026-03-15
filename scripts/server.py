@@ -107,6 +107,35 @@ def _originals_dir(project_dir: Path) -> Path:
     return d
 
 
+def _generated_dir(project_dir: Path) -> Path:
+    generated = (project_dir / project_dir.name).resolve()
+    try:
+        generated.relative_to(project_dir)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid generated dataset path") from exc
+    generated.mkdir(exist_ok=True)
+
+    originals_dir = (project_dir / "original").resolve()
+    thumbs_dir = (project_dir / THUMB_DIR_NAME).resolve()
+    for item in list(project_dir.iterdir()):
+        if item.resolve() in {generated, originals_dir, thumbs_dir}:
+            continue
+        if not item.is_file():
+            continue
+        if item.suffix.lower() != ".txt" and not _is_supported_image(item.name):
+            continue
+        target = generated / item.name
+        if target.exists():
+            try:
+                item.unlink()
+            except Exception:
+                pass
+            continue
+        shutil.move(str(item), str(target))
+
+    return generated
+
+
 def _thumbs_dir(project_dir: Path) -> Path:
     d = (project_dir / THUMB_DIR_NAME).resolve()
     d.mkdir(exist_ok=True)
@@ -126,35 +155,51 @@ def _compute_static_asset_version(static_dir: Path) -> str:
 
 
 def _active_images(project_dir: Path) -> List[Path]:
-    # Prefer resized outputs in project root; fallback to originals.
-    root_images = _iter_project_images(project_dir)
-    if root_images:
-        if _is_numbered_output_set(root_images):
-            return sorted(root_images, key=lambda p: p.name.lower())
-        return root_images
+    generated_images = _iter_project_images(_generated_dir(project_dir))
+    if generated_images:
+        if _is_numbered_output_set(generated_images):
+            return sorted(generated_images, key=lambda p: p.name.lower())
+        return generated_images
     return _iter_project_images(_originals_dir(project_dir))
 
 
-def _find_image_path(project_dir: Path, filename: str) -> Path:
+def _find_image_path_for_source(project_dir: Path, filename: str, source: str = "auto") -> Path:
     safe_name = _safe_image_name(filename)
-    root_candidate = (project_dir / safe_name).resolve()
+    generated_candidate = (_generated_dir(project_dir) / safe_name).resolve()
     originals_candidate = (_originals_dir(project_dir) / safe_name).resolve()
+    legacy_root_candidate = (project_dir / safe_name).resolve()
 
     try:
-        root_candidate.relative_to(project_dir)
+        generated_candidate.relative_to(project_dir)
         originals_candidate.relative_to(project_dir)
+        legacy_root_candidate.relative_to(project_dir)
     except ValueError as exc:
         raise HTTPException(400, "Invalid image path") from exc
 
-    if root_candidate.exists():
-        return root_candidate
-    if originals_candidate.exists():
-        return originals_candidate
+    source_mode = (source or "auto").strip().lower()
+    if source_mode == "original":
+        candidates = (originals_candidate, legacy_root_candidate, generated_candidate)
+    elif source_mode == "active":
+        candidates = (generated_candidate, legacy_root_candidate, originals_candidate)
+    else:
+        candidates = (generated_candidate, legacy_root_candidate, originals_candidate)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     raise HTTPException(404, "Image not found")
 
 
+def _find_image_path(project_dir: Path, filename: str) -> Path:
+    return _find_image_path_for_source(project_dir, filename, "auto")
+
+
 def _thumb_cache_path(project_dir: Path, img_path: Path, width: int) -> Path:
-    key = hashlib.md5(img_path.name.encode("utf-8")).hexdigest()[:12]
+    try:
+        rel_key = img_path.relative_to(project_dir).as_posix()
+    except ValueError:
+        rel_key = img_path.name
+    key = hashlib.md5(rel_key.encode("utf-8")).hexdigest()[:12]
     return _thumbs_dir(project_dir) / f"{key}_{width}.jpg"
 
 
@@ -206,9 +251,12 @@ def _ensure_thumb_image(project_dir: Path, img_path: Path, width: int, quality: 
     return cache_path
 
 
-def _remove_thumb_cache_for_name(project_dir: Path, filename: str) -> None:
-    safe_name = _safe_image_name(filename)
-    key = hashlib.md5(safe_name.encode("utf-8")).hexdigest()[:12]
+def _remove_thumb_cache_for_path(project_dir: Path, img_path: Path) -> None:
+    try:
+        rel_key = img_path.relative_to(project_dir).as_posix()
+    except ValueError:
+        rel_key = img_path.name
+    key = hashlib.md5(rel_key.encode("utf-8")).hexdigest()[:12]
     thumb_dir = _thumbs_dir(project_dir)
     for thumb_path in thumb_dir.glob(f"{key}_*.jpg"):
         if thumb_path.is_file():
@@ -402,13 +450,15 @@ _route_ctx = {
     "_project_dir": _project_dir,
     "_is_supported_image": _is_supported_image,
     "_find_image_path": _find_image_path,
+    "_find_image_path_for_source": _find_image_path_for_source,
     "_active_images": _active_images,
     "_iter_project_images": _iter_project_images,
     "_originals_dir": _originals_dir,
+    "_generated_dir": _generated_dir,
     "_thumbs_dir": _thumbs_dir,
     "_ensure_unique_path": _ensure_unique_path,
     "_ensure_thumb_image": _ensure_thumb_image,
-    "_remove_thumb_cache_for_name": _remove_thumb_cache_for_name,
+    "_remove_thumb_cache_for_path": _remove_thumb_cache_for_path,
     "_hex_to_rgb": _hex_to_rgb,
     "_cleanup_resize_jobs": _cleanup_resize_jobs,
     "_set_resize_job": _set_resize_job,

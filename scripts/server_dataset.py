@@ -17,11 +17,13 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
     _normalize_project_name = ctx["_normalize_project_name"]
     _project_dir = ctx["_project_dir"]
     _find_image_path = ctx["_find_image_path"]
+    _find_image_path_for_source = ctx["_find_image_path_for_source"]
     _ensure_thumb_image = ctx["_ensure_thumb_image"]
     _originals_dir = ctx["_originals_dir"]
+    _generated_dir = ctx["_generated_dir"]
     _is_supported_image = ctx["_is_supported_image"]
     _ensure_unique_path = ctx["_ensure_unique_path"]
-    _remove_thumb_cache_for_name = ctx["_remove_thumb_cache_for_name"]
+    _remove_thumb_cache_for_path = ctx["_remove_thumb_cache_for_path"]
 
     @app.get("/")
     async def root():
@@ -58,6 +60,11 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
             raise ctx["HTTPException"](400, "Project already exists")
 
         shutil.move(str(project_dir), str(target_dir))
+        old_generated_dir = (target_dir / name).resolve()
+        new_generated_dir = (target_dir / clean_new_name).resolve()
+        if old_generated_dir.exists() and old_generated_dir.is_dir() and old_generated_dir != new_generated_dir:
+            if not new_generated_dir.exists():
+                shutil.move(str(old_generated_dir), str(new_generated_dir))
         return {"ok": True, "name": clean_new_name, "old_name": name, "image_count": len(_active_images(target_dir))}
 
     @app.delete("/api/projects/{name}")
@@ -75,7 +82,7 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
         if source_mode == "original":
             images_src = _iter_project_images(_originals_dir(project_dir))
             if not images_src:
-                images_src = _iter_project_images(project_dir)
+                images_src = _iter_project_images(_generated_dir(project_dir))
         else:
             images_src = _active_images(project_dir)
 
@@ -101,22 +108,32 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
                     "size": stat.st_size,
                     "url": f"/projects/{quote(project_name)}/{quote(rel_path, safe='/')}?v={version}",
                     "thumb_url": (
-                        f"/api/projects/{quote(project_name)}/thumbnails/{quote(img_path.name)}"
+                        f"/api/projects/{quote(project_name)}/thumbnails/{quote(rel_path, safe='/')}"
                         f"?w=640&v={version}"
                     ),
                 }
             )
         return images
 
-    @app.get("/api/projects/{name}/thumbnails/{filename}")
+    @app.get("/api/projects/{name}/thumbnails/{filepath:path}")
     async def image_thumbnail(
         name: str,
-        filename: str,
+        filepath: str,
         w: int = Query(640, ge=64, le=2048),
         q: int = Query(82, ge=40, le=95),
     ):
         project_dir = _project_dir(name, must_exist=True)
-        img_path = _find_image_path(project_dir, filename)
+        raw_path = (filepath or "").replace("\\", "/").lstrip("/")
+        if "/" in raw_path:
+            img_path = (project_dir / raw_path).resolve()
+            try:
+                img_path.relative_to(project_dir)
+            except ValueError as exc:
+                raise ctx["HTTPException"](400, "Invalid thumbnail path") from exc
+            if not img_path.exists() or not _is_supported_image(img_path.name):
+                raise ctx["HTTPException"](404, "Image not found")
+        else:
+            img_path = _find_image_path(project_dir, raw_path)
         thumb_path = _ensure_thumb_image(project_dir, img_path, w, q)
         return FileResponse(
             str(thumb_path),
@@ -147,29 +164,29 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
         return {"saved": saved, "errors": errors}
 
     @app.delete("/api/projects/{name}/images/{filename}")
-    async def delete_image(name: str, filename: str):
+    async def delete_image(name: str, filename: str, source: str = Query("auto")):
         project_dir = _project_dir(name, must_exist=True)
-        img_path = _find_image_path(project_dir, filename)
+        img_path = _find_image_path_for_source(project_dir, filename, source)
 
         img_path.unlink()
-        _remove_thumb_cache_for_name(project_dir, img_path.name)
+        _remove_thumb_cache_for_path(project_dir, img_path)
         label_path = img_path.with_suffix(".txt")
         if label_path.exists():
             label_path.unlink()
         return {"ok": True}
 
     @app.put("/api/projects/{name}/labels/{filename}")
-    async def update_label(name: str, filename: str, label: str = Form(...)):
+    async def update_label(name: str, filename: str, label: str = Form(...), source: str = Query("auto")):
         project_dir = _project_dir(name, must_exist=True)
-        img_path = _find_image_path(project_dir, filename)
+        img_path = _find_image_path_for_source(project_dir, filename, source)
         label_path = img_path.with_suffix(".txt")
         label_path.write_text(label.strip(), encoding="utf-8")
         return {"ok": True}
 
     @app.delete("/api/projects/{name}/labels/{filename}")
-    async def delete_label(name: str, filename: str):
+    async def delete_label(name: str, filename: str, source: str = Query("auto")):
         project_dir = _project_dir(name, must_exist=True)
-        img_path = _find_image_path(project_dir, filename)
+        img_path = _find_image_path_for_source(project_dir, filename, source)
         label_path = img_path.with_suffix(".txt")
         if label_path.exists():
             label_path.unlink()
@@ -179,7 +196,7 @@ def register_dataset_routes(app: Any, ctx: Dict[str, Any]) -> None:
     async def clear_project_labels(name: str):
         project_dir = _project_dir(name, must_exist=True)
         deleted = 0
-        for directory in (project_dir, _originals_dir(project_dir)):
+        for directory in (project_dir, _generated_dir(project_dir), _originals_dir(project_dir)):
             for label_path in directory.glob("*.txt"):
                 if label_path.is_file():
                     label_path.unlink()
