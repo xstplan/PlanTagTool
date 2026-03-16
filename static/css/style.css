@@ -472,19 +472,36 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 .empty-state-sub  { font-size: 13px; }
 
 /* ── Dataset Panel ───────────────────────────────────────────────────────── */
+#panel-dataset .content {
+  overflow: hidden;
+}
+
+#dataset-main {
+  height: 100%;
+}
+
 .dataset-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
   gap: 16px;
   align-items: start;
+  height: 100%;
+  min-height: 420px;
 }
 
 .dataset-mid {
   min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 .dataset-detail-col {
   min-width: 0;
+  align-self: stretch;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 .dataset-detail-sticky {
@@ -495,6 +512,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
 
 #dataset-detail-card {
   min-height: 280px;
+  margin-bottom: 0;
 }
 
 #dataset-detail-text {
@@ -502,9 +520,31 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent);
   height: 260px;
 }
 
+.dataset-mid::-webkit-scrollbar,
+.dataset-detail-col::-webkit-scrollbar {
+  width: 6px;
+}
+
 @media (max-width: 1100px) {
+  #panel-dataset .content {
+    overflow-y: auto;
+  }
+
+  #dataset-main {
+    height: auto;
+  }
+
   .dataset-layout {
+    height: auto;
+    min-height: 0;
     grid-template-columns: 1fr;
+  }
+
+  .dataset-mid,
+  .dataset-detail-col {
+    height: auto;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .dataset-detail-sticky {
