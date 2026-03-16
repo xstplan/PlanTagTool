@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import io
+import time
 from typing import Any, Dict, Tuple
 from uuid import uuid4
 
@@ -10,42 +12,49 @@ from pydantic import BaseModel, Field
 
 _FORMAT_RULE_EN = (
     "Return exactly one line of comma-separated tags in english lowercase. "
-    "No sentence, no explanation, no markdown, no bullet list, no numbering."
+    "No sentence, no explanation, no markdown, no bullet list, no numbering, no colon, no key:value fields."
 )
 
 _FORMAT_RULE_ZH = (
     "Return exactly one line of comma-separated tags in simplified chinese. "
-    "No sentence, no explanation, no markdown, no bullet list, no numbering."
+    "No sentence, no explanation, no markdown, no bullet list, no numbering, no colon, no key:value fields."
 )
 
 LABEL_PROMPT_BASES = {
     "character": (
-        "Generate comma-separated LoRA training tags for a character-focused dataset image. "
-        "Tag only stable, visually trainable attributes: character count, gender cue tags, hairstyle, hair color, eye color, "
-        "face details, expression, outfit, accessories, body pose, camera framing, and background elements only if they are clearly visible and relevant. "
-        "Exclude subjective quality judgments, hidden details, interpretation, and non-visual assumptions. "
+        "Generate comma-separated LoRA training tags for a character or face-focused LoRA dataset image. "
+        "Prioritize stable identity and face traits first, character count, gender cue tags, hairstyle, hair color, hair length, bangs, eye color, eye shape, "
+        "face shape, eyebrows, lips, nose, visible facial marks, expression, head angle, and gaze direction. "
+        "Use short plain tag phrases only. "
+        "Only include clothing, accessories, pose, camera framing, lighting, or background when they are dominant, consistent, and important for the training target. "
+        "For face-focused training, avoid weak or incidental outfit/background tags. "
+        "Exclude subjective quality judgments, hidden details, interpretation, long descriptive phrases, and non-visual assumptions. "
     ),
     "object": (
         "Generate comma-separated LoRA training tags for an object-focused or product-focused dataset image. "
-        "Tag the main subject only: category, material, color, shape, surface texture, structure, parts, condition, "
+        "Tag the main subject only, category, material, color, shape, surface texture, structure, parts, condition, "
         "and printed text or logo on the object if visible. "
         "Exclude people, hands, body parts, scene, lighting style, camera terms, mood, and unrelated objects unless they are part of the subject itself. "
     ),
     "style": (
-        "Generate comma-separated LoRA training tags for style training. "
-        "Tag only stable visual style attributes: medium, style family, line quality, rendering technique, shading method, "
-        "color palette, texture treatment, composition style, and atmosphere. "
-        "Exclude literal scene or object details unless they are necessary to identify the style itself. "
+        "Generate comma-separated LoRA training tags for a style-focused dataset image. "
+        "Output only plain reusable tag phrases, not labeled fields and not natural-language descriptions. "
+        "Never use schema words or prefixes such as medium, style family, line quality, rendering technique, shading method, "
+        "color palette, texture treatment, composition style, atmosphere, or any key:value form. "
+        "Tag only learnable visual style traits such as photography medium, film look, cinematic lighting, soft focus, shallow depth of field, "
+        "warm color grading, film grain, rim lighting, backlighting, bloom, bokeh, high contrast, low saturation, pastel tones, vintage tone, "
+        "or painterly rendering when truly visible. "
+        "Exclude concrete subject identity, clothing, pose, scene objects, body parts, and long descriptive phrases. "
     ),
     "scenery": (
         "Generate comma-separated LoRA training tags for scenery or background dataset images. "
-        "Tag only environment attributes: indoor or outdoor type, location type, terrain, architecture, vegetation, weather, season, "
+        "Tag only environment attributes,indoor or outdoor type, location type, terrain, architecture, vegetation, weather, season, "
         "time of day, lighting condition, perspective, and atmosphere. "
         "Exclude people, clothing, and small incidental objects unless they are dominant visual elements. "
     ),
     "fashion": (
         "Generate comma-separated LoRA training tags for clothing-focused dataset images. "
-        "Tag only garments and accessories themselves: garment type, silhouette, fit, sleeve or length, neckline, closure, "
+        "Tag only garments and accessories themselves, garment type, silhouette, fit, sleeve or length, neckline, closure, "
         "fabric, material, pattern, color, trim, decoration, and style category. "
         "Exclude face, hair, body shape, pose, skin, background, lighting, and non-fashion objects. "
     ),
@@ -55,7 +64,7 @@ LABEL_PROMPT_BASES = {
     ),
     "general": (
         "Generate comma-separated LoRA training tags for a general LoRA dataset image. "
-        "Tag only the main trainable visual features: primary subject, stable appearance traits, clothing or material, color scheme, "
+        "Tag only the main trainable visual features, primary subject, stable appearance traits, clothing or material, color scheme, "
         "pose or layout, and background elements only when visually important. "
         "Exclude subjective evaluations, long phrases, interpretation, and redundant context. "
     ),
@@ -120,7 +129,13 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
     _find_image_path = ctx["_find_image_path"]
     _clean_llm_response = ctx["_clean_llm_response"]
     _merge_tags = ctx["_merge_tags"]
+    _cleanup_label_jobs = ctx["_cleanup_label_jobs"]
+    _set_label_job = ctx["_set_label_job"]
+    _get_label_job = ctx["_get_label_job"]
+    _run_in_thread = ctx["_run_in_thread"]
     LABEL_CANCEL_FLAGS = ctx["LABEL_CANCEL_FLAGS"]
+    LABEL_JOBS = ctx["LABEL_JOBS"]
+    LABEL_JOBS_LOCK = ctx["LABEL_JOBS_LOCK"]
     HTTPException = ctx["HTTPException"]
 
     def _encode_image_for_lm(img_path: Any, fmt: str = "JPEG", max_edge: int = 0) -> Any:
@@ -258,6 +273,7 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
         if not clean_job_id:
             raise HTTPException(400, "Invalid job id")
         LABEL_CANCEL_FLAGS[clean_job_id] = True
+        _set_label_job(clean_job_id, message="cancel_requested")
         return {"ok": True}
 
     @app.post("/api/translate-tags")
@@ -347,6 +363,170 @@ def register_label_routes(app: Any, ctx: Dict[str, Any]) -> None:
             LABEL_CANCEL_FLAGS.pop(job_id, None)
 
         return {"results": results, "job_id": job_id, "canceled": canceled}
+
+    def _run_label_job_sync(job_id: str, project_name: str, settings: LabelSettings) -> None:
+        async def runner() -> None:
+            ok_count = 0
+            fail_count = 0
+            skipped_count = 0
+            results = []
+            canceled = False
+
+            try:
+                project_dir = _project_dir(project_name, must_exist=True)
+                images = _active_images(project_dir)
+                total = len(images)
+
+                _set_label_job(
+                    job_id,
+                    status="running",
+                    total=total,
+                    done=0,
+                    ok=0,
+                    fail=0,
+                    skipped=0,
+                    progress=0,
+                    current_file="",
+                    message="processing",
+                    results=[],
+                    canceled=False,
+                )
+
+                if not images:
+                    _set_label_job(
+                        job_id,
+                        status="completed",
+                        total=0,
+                        done=0,
+                        ok=0,
+                        fail=0,
+                        skipped=0,
+                        progress=100,
+                        current_file="",
+                        message="No images found",
+                        results=[],
+                        canceled=False,
+                    )
+                    return
+
+                prompt, label_language = _resolve_prompt(settings)
+                base_url = settings.lm_studio_url.rstrip("/")
+
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    for img_path in images:
+                        if LABEL_CANCEL_FLAGS.get(job_id):
+                            canceled = True
+                            break
+
+                        _set_label_job(job_id, current_file=img_path.name, message="processing")
+
+                        try:
+                            result = await _label_single_image(
+                                client=client,
+                                img_path=img_path,
+                                settings=settings,
+                                prompt=prompt,
+                                label_language=label_language,
+                                base_url=base_url,
+                            )
+                        except Exception as exc:
+                            result = {"file": img_path.name, "ok": False, "error": str(exc)}
+
+                        results.append(result)
+                        if result.get("skipped"):
+                            skipped_count += 1
+                        elif result.get("ok"):
+                            ok_count += 1
+                        else:
+                            fail_count += 1
+
+                        done = len(results)
+                        progress = int((done / total) * 100) if total > 0 else 100
+                        _set_label_job(
+                            job_id,
+                            status="running",
+                            total=total,
+                            done=done,
+                            ok=ok_count,
+                            fail=fail_count,
+                            skipped=skipped_count,
+                            progress=progress,
+                            current_file=img_path.name,
+                            message="processing",
+                            results=list(results),
+                            canceled=False,
+                        )
+
+                final_status = "canceled" if canceled else "completed"
+                final_message = "canceled" if canceled else "completed"
+                _set_label_job(
+                    job_id,
+                    status=final_status,
+                    total=total,
+                    done=len(results),
+                    ok=ok_count,
+                    fail=fail_count,
+                    skipped=skipped_count,
+                    progress=(int((len(results) / total) * 100) if total > 0 else 100) if canceled else 100,
+                    current_file="",
+                    message=final_message,
+                    results=list(results),
+                    canceled=canceled,
+                )
+            except Exception as exc:
+                _set_label_job(
+                    job_id,
+                    status="failed",
+                    message=str(exc),
+                    error=str(exc),
+                    current_file="",
+                )
+            finally:
+                LABEL_CANCEL_FLAGS.pop(job_id, None)
+
+        asyncio.run(runner())
+
+    async def _run_label_job(job_id: str, project_name: str, settings: LabelSettings) -> None:
+        await _run_in_thread(_run_label_job_sync, job_id, project_name, settings)
+
+    @app.post("/api/projects/{name}/label/start")
+    async def start_label_job(name: str, settings: LabelSettings):
+        _project_dir(name, must_exist=True)
+        _cleanup_label_jobs()
+
+        job_id = settings.job_id.strip() or str(uuid4())
+        now = time.time()
+        with LABEL_JOBS_LOCK:
+            LABEL_JOBS[job_id] = {
+                "job_id": job_id,
+                "project": name,
+                "status": "queued",
+                "progress": 0,
+                "total": 0,
+                "done": 0,
+                "ok": 0,
+                "fail": 0,
+                "skipped": 0,
+                "current_file": "",
+                "message": "queued",
+                "error": "",
+                "results": [],
+                "canceled": False,
+                "created_at": now,
+                "updated_at": now,
+            }
+
+        LABEL_CANCEL_FLAGS[job_id] = False
+        asyncio.create_task(_run_label_job(job_id, name, settings))
+        return {"ok": True, "job_id": job_id}
+
+    @app.get("/api/label-jobs/{job_id}")
+    async def get_label_job(job_id: str):
+        clean_job_id = job_id.strip()
+        if not clean_job_id:
+            raise HTTPException(400, "Invalid job id")
+        _cleanup_label_jobs()
+        return _get_label_job(clean_job_id)
 
     @app.post("/api/projects/{name}/label-single/{filename}")
     async def label_single(name: str, filename: str, settings: LabelSettings):

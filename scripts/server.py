@@ -37,6 +37,8 @@ PROJECTS_DIR.mkdir(exist_ok=True)
 IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "bmp", "gif"}
 INVALID_PROJECT_CHARS = set(r'\/:*?"<>|')
 LABEL_CANCEL_FLAGS: Dict[str, bool] = {}
+LABEL_JOBS: Dict[str, Dict[str, Any]] = {}
+LABEL_JOBS_LOCK = threading.Lock()
 THUMB_DIR_NAME = ".thumbs"
 RESIZE_JOBS: Dict[str, Dict[str, Any]] = {}
 RESIZE_JOBS_LOCK = threading.Lock()
@@ -364,6 +366,12 @@ def _clean_llm_response(raw: str) -> str:
         clean = re.sub(r"\s{2,}", " ", tok.strip(" \t\r\n,.;:|()[]{}\"'"))
         if not clean:
             continue
+        if ":" in clean:
+            lhs, rhs = clean.split(":", 1)
+            lhs_norm = re.sub(r"\s+", " ", lhs.strip()).lower()
+            rhs_norm = rhs.strip()
+            if rhs_norm and re.fullmatch(r"[a-z\u4e00-\u9fff][a-z0-9\u4e00-\u9fff _-]{0,40}", lhs_norm):
+                clean = rhs_norm
         if "`" in clean:
             continue
         low = clean.lower()
@@ -406,9 +414,31 @@ def _cleanup_resize_jobs(now_ts: Optional[float] = None) -> None:
             RESIZE_JOBS.pop(job_id, None)
 
 
+def _cleanup_label_jobs(now_ts: Optional[float] = None) -> None:
+    now = now_ts if now_ts is not None else time.time()
+    stale_ids = []
+    with LABEL_JOBS_LOCK:
+        for job_id, data in LABEL_JOBS.items():
+            status = str(data.get("status", ""))
+            updated_at = float(data.get("updated_at", 0.0) or 0.0)
+            if status in {"completed", "failed", "canceled"} and now - updated_at > 3600:
+                stale_ids.append(job_id)
+        for job_id in stale_ids:
+            LABEL_JOBS.pop(job_id, None)
+
+
 def _set_resize_job(job_id: str, **kwargs: Any) -> None:
     with RESIZE_JOBS_LOCK:
         job = RESIZE_JOBS.get(job_id)
+        if job is None:
+            return
+        job.update(kwargs)
+        job["updated_at"] = time.time()
+
+
+def _set_label_job(job_id: str, **kwargs: Any) -> None:
+    with LABEL_JOBS_LOCK:
+        job = LABEL_JOBS.get(job_id)
         if job is None:
             return
         job.update(kwargs)
@@ -420,6 +450,14 @@ def _get_resize_job(job_id: str) -> Dict[str, Any]:
         job = RESIZE_JOBS.get(job_id)
         if not job:
             raise HTTPException(404, "Resize job not found")
+        return dict(job)
+
+
+def _get_label_job(job_id: str) -> Dict[str, Any]:
+    with LABEL_JOBS_LOCK:
+        job = LABEL_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(404, "Label job not found")
         return dict(job)
 
 
@@ -447,6 +485,8 @@ _route_ctx = {
     "RESIZE_JOBS": RESIZE_JOBS,
     "RESIZE_JOBS_LOCK": RESIZE_JOBS_LOCK,
     "LABEL_CANCEL_FLAGS": LABEL_CANCEL_FLAGS,
+    "LABEL_JOBS": LABEL_JOBS,
+    "LABEL_JOBS_LOCK": LABEL_JOBS_LOCK,
     "_normalize_project_name": _normalize_project_name,
     "_project_dir": _project_dir,
     "_is_supported_image": _is_supported_image,
@@ -462,8 +502,11 @@ _route_ctx = {
     "_remove_thumb_cache_for_path": _remove_thumb_cache_for_path,
     "_hex_to_rgb": _hex_to_rgb,
     "_cleanup_resize_jobs": _cleanup_resize_jobs,
+    "_cleanup_label_jobs": _cleanup_label_jobs,
     "_set_resize_job": _set_resize_job,
+    "_set_label_job": _set_label_job,
     "_get_resize_job": _get_resize_job,
+    "_get_label_job": _get_label_job,
     "_run_in_thread": _run_in_thread,
     "_clean_llm_response": _clean_llm_response,
     "_merge_tags": _merge_tags,

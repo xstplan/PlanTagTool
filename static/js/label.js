@@ -6,6 +6,7 @@ let labelSelectedProject = "";
 let labelSelectedFilename = "";
 let labelLanguage = "en";
 let labelContextTarget = null;
+let labelPollToken = 0;
 
 const labelDetail = createImageDetailPanelController({
   gridSelector: "#label-img-grid",
@@ -25,7 +26,7 @@ const labelDetail = createImageDetailPanelController({
 });
 
 const modeInfo = {
-  character: "人物打标：标注人数、发型发色、表情、服装、姿态、视角和背景等可见信息",
+  character: "人物打标：优先标注角色脸和身份稳定特征，如发型发色、眼睛、脸部细节、表情、视线与头部角度；弱化服装和背景",
   object:    "物体打标：标注主体物体本身（类别、材质、颜色、结构细节）以及必要场景信息",
   style:     "风格打标：标注画风与表现方式（媒介、线条、渲染、色调、构图、氛围）",
   scenery:   "场景打标：标注环境类型、时间天气、季节、光线、视角与空间氛围",
@@ -437,37 +438,72 @@ document.getElementById("btn-do-label").addEventListener("click", async () => {
     return;
   }
 
-  const { pbar, ptext } = updateLabelResultPanelStart("正在打标，请稍候...");
+  const { pbar, ptext } = updateLabelResultPanelStart("准备任务...");
   labelJobId = settings.job_id;
+  let renderedResultCount = 0;
 
   document.getElementById("btn-do-label").disabled = true;
   document.getElementById("btn-stop-label").style.display = "block";
+  const pollToken = ++labelPollToken;
 
   try {
-    const res = await api("POST", `${projectApi(proj)}/label`, settings);
+    const start = await api("POST", `${projectApi(proj)}/label/start`, settings);
+    const jobId = start.job_id;
+    if (!jobId) {
+      throw new Error("任务启动失败：未返回 job_id");
+    }
+
+    let job = null;
+    while (pollToken === labelPollToken) {
+      job = await api("GET", `/api/label-jobs/${encPath(jobId)}`);
+      const total = Number(job.total || 0);
+      const done = Number(job.done || 0);
+      const progress = Math.max(2, total > 0 ? Math.floor((done / total) * 100) : Number(job.progress || 0));
+      pbar.style.width = `${Math.min(100, progress)}%`;
+      if (job.message === "cancel_requested") {
+        ptext.textContent = "正在停止，等待当前图片完成...";
+      } else {
+        ptext.textContent = total > 0
+          ? `打标中：${done}/${total}${job.current_file ? `（${job.current_file}）` : ""}`
+          : "打标中，正在准备...";
+      }
+
+      const results = Array.isArray(job.results) ? job.results : [];
+      while (renderedResultCount < results.length) {
+        appendLabelResultItem(results[renderedResultCount]);
+        renderedResultCount += 1;
+      }
+
+      if (job.status === "completed" || job.status === "canceled") break;
+      if (job.status === "failed") {
+        throw new Error(job.error || job.message || "批量打标失败");
+      }
+      await sleep(250);
+    }
+
+    if (pollToken !== labelPollToken) return;
+
+    const results = Array.isArray(job?.results) ? job.results : [];
+    const ok = results.filter(r => r.ok && !r.skipped).length;
+    const skipCount = results.filter(r => r.skipped).length;
+    const fail = results.filter(r => !r.ok).length;
+    const canceled = job?.status === "canceled" || Boolean(job?.canceled);
+
     pbar.style.width = "100%";
+    ptext.textContent = `${canceled ? "已停止：" : "完成："}${ok} 已标注${skipCount ? ` / ${skipCount} 跳过` : ""}${fail ? ` / ${fail} 失败` : ""}`;
 
-    const ok = res.results.filter(r => r.ok && !r.skipped).length;
-    const skipCount = res.results.filter(r => r.skipped).length;
-    const fail = res.results.filter(r => !r.ok).length;
-
-    ptext.textContent = `${res.canceled ? "已停止：" : "完成："}${ok} 已标注${skipCount ? ` / ${skipCount} 跳过` : ""}${fail ? ` / ${fail} 失败` : ""}`;
-
-    res.results.forEach(r => {
-      appendLabelResultItem(r);
-    });
-
-    toast(res.canceled ? "打标任务已停止" : `打标完成：${ok} 张`, res.canceled ? "info" : "success");
-    loadLabelImages(proj);
+    toast(canceled ? "打标任务已停止" : `打标完成：${ok} 张`, canceled ? "info" : "success");
+    await loadLabelImages(proj);
   } catch (e) {
     toast("打标失败: " + e.message, "error");
     ptext.textContent = "失败: " + e.message;
+    pbar.style.width = "100%";
     pbar.style.background = "var(--error)";
+  } finally {
+    document.getElementById("btn-do-label").disabled = false;
+    document.getElementById("btn-stop-label").style.display = "none";
+    labelJobId = null;
   }
-
-  document.getElementById("btn-do-label").disabled = false;
-  document.getElementById("btn-stop-label").style.display = "none";
-  labelJobId = null;
 });
 
 document.getElementById("btn-stop-label").addEventListener("click", async () => {
@@ -478,6 +514,10 @@ document.getElementById("btn-stop-label").addEventListener("click", async () => 
 
   try {
     await api("POST", `/api/label-jobs/${encPath(labelJobId)}/cancel`, {});
+    const ptext = document.getElementById("label-ptext");
+    if (ptext) {
+      ptext.textContent = "正在停止，等待当前图片完成...";
+    }
     toast("已发送停止信号，当前图片处理完成后停止", "info");
   } catch (e) {
     toast("发送停止信号失败: " + e.message, "error");
