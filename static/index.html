@@ -647,6 +647,28 @@
   </div>
 </div>
 
+<div class="label-preview-modal hidden" id="dataset-preview-modal">
+  <div class="label-modal-box dataset-preview-box">
+    <div class="modal-header">
+      <div class="dataset-preview-title-wrap">
+        <span class="modal-title" id="dataset-preview-title">原图预览</span>
+        <span class="text-dim text-sm" id="dataset-preview-meta"></span>
+      </div>
+      <div class="flex gap-8 items-center">
+        <button class="btn btn-ghost btn-sm" id="dataset-preview-zoom-out" type="button">-</button>
+        <button class="btn btn-ghost btn-sm" id="dataset-preview-zoom-reset" type="button">100%</button>
+        <button class="btn btn-ghost btn-sm" id="dataset-preview-zoom-in" type="button">+</button>
+        <button class="btn btn-ghost btn-sm" id="dataset-preview-close" type="button">关闭</button>
+      </div>
+    </div>
+    <div class="modal-body dataset-preview-body">
+      <div class="dataset-preview-stage" id="dataset-preview-stage">
+        <img id="dataset-preview-img" class="dataset-preview-img" src="" alt="" />
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="context-menu hidden" id="label-context-menu">
   <button class="context-menu-item" id="label-context-single" type="button">按当前设置单独打标</button>
 </div>

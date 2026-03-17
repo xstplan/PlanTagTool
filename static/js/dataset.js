@@ -5,6 +5,17 @@ let datasetSelectedProject = "";
 let datasetSelectedFilename = "";
 let renameTargetProject = "";
 let datasetImageSource = "original";
+let datasetPreviewZoom = 1;
+let datasetPreviewBaseScale = 1;
+let datasetPreviewImageMeta = null;
+const datasetPreviewDrag = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  scrollLeft: 0,
+  scrollTop: 0,
+  pointerId: null,
+};
 
 const datasetDetail = createImageDetailPanelController({
   gridSelector: "#img-grid",
@@ -47,6 +58,131 @@ function updateDatasetSourceSwitch() {
   document.querySelectorAll("[data-dataset-source]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.datasetSource === datasetImageSource);
   });
+}
+
+function getDatasetPreviewEls() {
+  return {
+    modal: document.getElementById("dataset-preview-modal"),
+    title: document.getElementById("dataset-preview-title"),
+    meta: document.getElementById("dataset-preview-meta"),
+    img: document.getElementById("dataset-preview-img"),
+    stage: document.getElementById("dataset-preview-stage"),
+    resetBtn: document.getElementById("dataset-preview-zoom-reset"),
+  };
+}
+
+function isDatasetPreviewOpen() {
+  const { modal } = getDatasetPreviewEls();
+  return Boolean(modal && !modal.classList.contains("hidden"));
+}
+
+function clampDatasetPreviewZoom(value) {
+  return Math.max(0.25, Math.min(8, Number(value) || 1));
+}
+
+function updateDatasetPreviewStageState() {
+  const { stage } = getDatasetPreviewEls();
+  if (!stage) return;
+  const canPan = stage.scrollWidth > stage.clientWidth + 2 || stage.scrollHeight > stage.clientHeight + 2;
+  stage.classList.toggle("can-pan", canPan);
+  if (!datasetPreviewDrag.active) {
+    stage.classList.toggle("dragging", false);
+  }
+}
+
+function updateDatasetPreviewScale() {
+  const { img, resetBtn } = getDatasetPreviewEls();
+  if (!img || !datasetPreviewImageMeta?.width || !datasetPreviewImageMeta?.height) return;
+
+  const appliedScale = datasetPreviewBaseScale * datasetPreviewZoom;
+  img.style.width = `${Math.max(1, Math.round(datasetPreviewImageMeta.width * appliedScale))}px`;
+  img.style.height = `${Math.max(1, Math.round(datasetPreviewImageMeta.height * appliedScale))}px`;
+  if (resetBtn) {
+    resetBtn.textContent = `${Math.round(datasetPreviewZoom * 100)}%`;
+  }
+  requestAnimationFrame(updateDatasetPreviewStageState);
+}
+
+function fitDatasetPreviewImage(resetZoom = false) {
+  const { stage } = getDatasetPreviewEls();
+  if (!stage || !datasetPreviewImageMeta?.width || !datasetPreviewImageMeta?.height) return;
+
+  const stageWidth = Math.max(1, stage.clientWidth - 28);
+  const stageHeight = Math.max(1, stage.clientHeight - 28);
+  const widthRatio = stageWidth / datasetPreviewImageMeta.width;
+  const heightRatio = stageHeight / datasetPreviewImageMeta.height;
+  datasetPreviewBaseScale = Math.min(widthRatio, heightRatio, 1);
+  if (!Number.isFinite(datasetPreviewBaseScale) || datasetPreviewBaseScale <= 0) {
+    datasetPreviewBaseScale = 1;
+  }
+  if (resetZoom) {
+    datasetPreviewZoom = 1;
+  }
+  updateDatasetPreviewScale();
+}
+
+function setDatasetPreviewZoom(nextZoom) {
+  datasetPreviewZoom = clampDatasetPreviewZoom(nextZoom);
+  updateDatasetPreviewScale();
+}
+
+function closeDatasetPreviewModal() {
+  const { modal, img, title, meta, resetBtn, stage } = getDatasetPreviewEls();
+  if (!modal) return;
+  modal.classList.add("hidden");
+  if (img) {
+    img.src = "";
+    img.style.width = "";
+    img.style.height = "";
+  }
+  if (title) title.textContent = "原图预览";
+  if (meta) meta.textContent = "";
+  if (resetBtn) resetBtn.textContent = "100%";
+  if (stage) {
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
+    stage.classList.remove("can-pan", "dragging");
+  }
+  datasetPreviewDrag.active = false;
+  datasetPreviewDrag.pointerId = null;
+  datasetPreviewImageMeta = null;
+  datasetPreviewZoom = 1;
+  datasetPreviewBaseScale = 1;
+}
+
+function openDatasetPreviewModal(img) {
+  if (!img || datasetImageSource !== "original") return;
+
+  const { modal, title, meta, img: imgEl } = getDatasetPreviewEls();
+  if (!modal || !imgEl) return;
+
+  datasetPreviewImageMeta = {
+    filename: img.filename,
+    width: Number(img.width || 0),
+    height: Number(img.height || 0),
+    url: img.url || datasetImageApi(img.filename),
+  };
+  datasetPreviewZoom = 1;
+  datasetPreviewBaseScale = 1;
+
+  if (title) title.textContent = img.filename || "原图预览";
+  if (meta) {
+    meta.textContent = datasetPreviewImageMeta.width && datasetPreviewImageMeta.height
+      ? `${datasetPreviewImageMeta.width} × ${datasetPreviewImageMeta.height}`
+      : "";
+  }
+
+  modal.classList.remove("hidden");
+  imgEl.onload = () => {
+    if (!datasetPreviewImageMeta) return;
+    datasetPreviewImageMeta.width = imgEl.naturalWidth || datasetPreviewImageMeta.width;
+    datasetPreviewImageMeta.height = imgEl.naturalHeight || datasetPreviewImageMeta.height;
+    if (meta) {
+      meta.textContent = `${datasetPreviewImageMeta.width} × ${datasetPreviewImageMeta.height}`;
+    }
+    requestAnimationFrame(() => fitDatasetPreviewImage(true));
+  };
+  imgEl.src = datasetPreviewImageMeta.url;
 }
 
 async function loadProjects() {
@@ -114,6 +250,7 @@ async function selectProject(name) {
   const projectChanged = State.currentProject !== name;
   State.currentProject = name;
   if (projectChanged) {
+    closeDatasetPreviewModal();
     clearDatasetDetailPanel();
   }
   renderProjectList();
@@ -177,6 +314,10 @@ function renderImageGrid() {
       card.addEventListener("click", e => {
         if (e.target.dataset.del) return;
         showDatasetDetail(img, State.currentProject, card);
+      });
+      card.addEventListener("dblclick", e => {
+        if (e.target.dataset.del) return;
+        openDatasetPreviewModal(img);
       });
       card.querySelector(".img-card-del").addEventListener("click", e => {
         e.stopPropagation();
@@ -658,6 +799,7 @@ document.querySelectorAll("[data-dataset-source]").forEach(btn => {
   btn.addEventListener("click", async () => {
     const nextSource = btn.dataset.datasetSource || "original";
     if (nextSource === datasetImageSource) return;
+    closeDatasetPreviewModal();
     datasetImageSource = nextSource;
     updateDatasetSourceSwitch();
     clearDatasetDetailPanel(`点击${getDatasetSourceLabel()}查看和编辑详细信息`);
@@ -741,6 +883,75 @@ async function translateDatasetDetailTo(targetLanguage) {
 
 document.getElementById("dataset-translate-zh")?.addEventListener("click", () => translateDatasetDetailTo("zh"));
 document.getElementById("dataset-translate-en")?.addEventListener("click", () => translateDatasetDetailTo("en"));
+
+document.getElementById("dataset-preview-close")?.addEventListener("click", closeDatasetPreviewModal);
+document.getElementById("dataset-preview-zoom-in")?.addEventListener("click", () => {
+  setDatasetPreviewZoom(datasetPreviewZoom * 1.25);
+});
+document.getElementById("dataset-preview-zoom-out")?.addEventListener("click", () => {
+  setDatasetPreviewZoom(datasetPreviewZoom / 1.25);
+});
+document.getElementById("dataset-preview-zoom-reset")?.addEventListener("click", () => {
+  fitDatasetPreviewImage(true);
+});
+document.getElementById("dataset-preview-modal")?.addEventListener("click", event => {
+  if (event.target.id === "dataset-preview-modal") {
+    closeDatasetPreviewModal();
+  }
+});
+document.getElementById("dataset-preview-stage")?.addEventListener("wheel", event => {
+  if (!isDatasetPreviewOpen()) return;
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1.1 : 0.9;
+  setDatasetPreviewZoom(datasetPreviewZoom * factor);
+}, { passive: false });
+document.getElementById("dataset-preview-stage")?.addEventListener("pointerdown", event => {
+  const { stage } = getDatasetPreviewEls();
+  if (!stage || event.button !== 0) return;
+  const canPan = stage.classList.contains("can-pan");
+  if (!canPan) return;
+
+  datasetPreviewDrag.active = true;
+  datasetPreviewDrag.startX = event.clientX;
+  datasetPreviewDrag.startY = event.clientY;
+  datasetPreviewDrag.scrollLeft = stage.scrollLeft;
+  datasetPreviewDrag.scrollTop = stage.scrollTop;
+  datasetPreviewDrag.pointerId = event.pointerId;
+  stage.classList.add("dragging");
+  stage.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+});
+document.getElementById("dataset-preview-stage")?.addEventListener("pointermove", event => {
+  const { stage } = getDatasetPreviewEls();
+  if (!stage || !datasetPreviewDrag.active) return;
+  const dx = event.clientX - datasetPreviewDrag.startX;
+  const dy = event.clientY - datasetPreviewDrag.startY;
+  stage.scrollLeft = datasetPreviewDrag.scrollLeft - dx;
+  stage.scrollTop = datasetPreviewDrag.scrollTop - dy;
+});
+function stopDatasetPreviewDrag(event = null) {
+  const { stage } = getDatasetPreviewEls();
+  if (!stage || !datasetPreviewDrag.active) return;
+  if (event && datasetPreviewDrag.pointerId !== null) {
+    stage.releasePointerCapture?.(datasetPreviewDrag.pointerId);
+  }
+  datasetPreviewDrag.active = false;
+  datasetPreviewDrag.pointerId = null;
+  stage.classList.remove("dragging");
+}
+document.getElementById("dataset-preview-stage")?.addEventListener("pointerup", stopDatasetPreviewDrag);
+document.getElementById("dataset-preview-stage")?.addEventListener("pointercancel", stopDatasetPreviewDrag);
+document.getElementById("dataset-preview-stage")?.addEventListener("lostpointercapture", stopDatasetPreviewDrag);
+window.addEventListener("keydown", event => {
+  if (event.key === "Escape" && isDatasetPreviewOpen()) {
+    closeDatasetPreviewModal();
+  }
+});
+window.addEventListener("resize", () => {
+  if (isDatasetPreviewOpen()) {
+    requestAnimationFrame(() => fitDatasetPreviewImage(false));
+  }
+});
 
 async function refreshLabelRelatedViews(projectName) {
   const tasks = [];
